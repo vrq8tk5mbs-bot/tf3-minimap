@@ -1,0 +1,52 @@
+# Builds the companion downloads and publishes them as a GitHub release.
+# Run it by pushing a tag like v1.0.0 (or by hand from the Actions tab).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller==6.11.1
+      # one folder instead of one file: starts faster and antivirus flags it far less often
+      - run: pyinstaller --noconfirm --onedir --console --name "TF3 Minimap" --add-data "companion/web;web" companion/tf3map_server.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/TF3 Minimap
+
+  release:
+    needs: windows-exe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: "build/TF3 Minimap"
+      - name: Pack the downloads
+        run: |
+          mkdir -p out
+          cp docs/companion-readme.txt "build/TF3 Minimap/README.txt"
+          (cd build && zip -qr "../out/TF3-Minimap-Windows.zip" "TF3 Minimap")
+          mkdir -p "pack/TF3 Minimap"
+          cp -r companion/. "pack/TF3 Minimap/"
+          cp docs/companion-readme.txt "pack/TF3 Minimap/README.txt"
+          chmod +x "pack/TF3 Minimap/Start Minimap (Mac).command" "pack/TF3 Minimap/start-minimap-linux.sh"
+          (cd pack && zip -qr "../out/TF3-Minimap-Mac-Linux.zip" "TF3 Minimap")
+          (cd mod && zip -qr "../out/tf3_minimap-mod-manual-install.zip" tf3_minimap -x "tf3_minimap/_metadata/mod.io_fileid.txt")
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.zip
+          generate_release_notes: true

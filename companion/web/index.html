@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1720">
+<title>TF3 Minimap</title>
+<style>
+  :root {
+    --bg: #0f1720;
+    --land: #16222d;
+    --land-edge: #233343;
+    --water: #0c2436;
+    --grid: rgba(255,255,255,0.045);
+    --grid-major: rgba(255,255,255,0.08);
+    --panel: rgba(16, 24, 33, 0.9);
+    --panel-solid: #121b25;
+    --panel-border: rgba(255,255,255,0.09);
+    --text: #e8edf2;
+    --muted: #8a99a8;
+    --accent: #ffcc4d;
+    --ok: #4cd18a;
+    --warn: #f0a83a;
+    --err: #f05a5a;
+    --town: #f4efe6;
+    --rail: #e8e2d6;
+    --road: #7d93a6;
+    --street: #3e5163;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo", sans-serif;
+    overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  canvas#map { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+  button { font: inherit; color: inherit; }
+
+  .bar { position: fixed; left: 0; right: 0; display: flex; gap: 8px; align-items: center; padding: 8px 10px; pointer-events: none; z-index: 5; }
+  .bar > * { pointer-events: auto; }
+  .top { top: 0; padding-top: calc(8px + var(--safe-top)); }
+  .bottom { bottom: 0; padding-bottom: calc(8px + var(--safe-bottom)); }
+
+  .pill { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 999px;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+
+  #status { display: flex; align-items: center; gap: 7px; padding: 7px 12px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  #status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err); box-shadow: 0 0 0 3px rgba(240,90,90,0.18); }
+  #status.ok .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(76,209,138,0.18); }
+  #status.stale .dot { background: var(--warn); box-shadow: 0 0 0 3px rgba(240,168,58,0.18); }
+
+  .search { position: relative; flex: 1; min-width: 0; }
+  .search input { width: 100%; padding: 8px 14px; color: var(--text); font: inherit; font-size: 16px; outline: none; }
+  .search input::placeholder { color: var(--muted); }
+  #results { position: absolute; top: calc(100% + 6px); left: 0; right: 0; border-radius: 14px; overflow: hidden; display: none; }
+  #results.open { display: block; }
+  #results button { display: flex; width: 100%; gap: 10px; align-items: center; padding: 10px 14px; background: none; border: 0;
+    border-top: 1px solid var(--panel-border); text-align: left; }
+  #results button:first-child { border-top: 0; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
+  .sw.round { border-radius: 50%; }
+  .sw.line { width: 14px; height: 4px; border-radius: 2px; }
+  #results .sub { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+
+  .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; flex: 1; min-width: 0; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { display: flex; align-items: center; gap: 6px; padding: 7px 11px; font-size: 12.5px; white-space: nowrap; cursor: pointer; flex: none; }
+  .chip .n { color: var(--muted); }
+  .chip.off { opacity: 0.4; }
+  .iconbtn { width: 38px; height: 38px; display: grid; place-items: center; cursor: pointer; padding: 0; flex: none; }
+  .iconbtn.on { color: #111; background: var(--accent); border-color: transparent; }
+  .iconbtn svg { width: 18px; height: 18px; }
+
+  #toast { position: fixed; left: 50%; bottom: calc(66px + var(--safe-bottom)); transform: translateX(-50%) translateY(8px); z-index: 30;
+    padding: 8px 14px; font-size: 13px; opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none;
+    width: max-content; max-width: calc(100vw - 32px); text-align: center; border-radius: 16px; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { color: #ffb4b4; }
+
+  #empty { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; pointer-events: none; }
+  #empty b { color: var(--text); display: block; margin-bottom: 6px; font-size: 15px; }
+
+  #legend { position: fixed; left: 12px; bottom: calc(104px + var(--safe-bottom)); z-index: 4; padding: 7px 10px; border-radius: 10px;
+    font-size: 11px; color: var(--muted); display: none; pointer-events: none; }
+  #legend .grad { width: 120px; height: 6px; border-radius: 3px; margin-top: 4px; }
+  #legend .ends { display: flex; justify-content: space-between; margin-top: 2px; }
+
+  /* info card */
+  #card { position: fixed; left: 8px; right: 8px; bottom: calc(60px + var(--safe-bottom)); z-index: 6; max-height: 46vh; overflow-y: auto;
+    border-radius: 18px; padding: 12px 14px 14px; display: none; -webkit-overflow-scrolling: touch; }
+  #card.open { display: block; }
+  #card .head { display: flex; align-items: center; gap: 8px; }
+  #card .kind { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  #card h3 { margin: 2px 0 0; font-size: 17px; font-weight: 650; }
+  #card .x { margin-left: auto; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(255,255,255,0.08); flex: none; }
+  #card .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px 12px; margin-top: 10px; }
+  #card .stat .k { font-size: 11px; color: var(--muted); }
+  #card .stat .v { font-size: 15px; font-weight: 600; margin-top: 1px; }
+  #card .stat .v small { font-weight: 400; color: var(--muted); font-size: 11px; }
+  #card .sec { margin-top: 12px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  #card .rows { margin-top: 4px; }
+  #card .r { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--panel-border); }
+  #card .r:first-child { border-top: 0; }
+  #card .r .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #card .r .num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #card .r.link { cursor: pointer; }
+  #card img.ic, .ic { width: 20px; height: 20px; flex: none; border-radius: 4px; }
+  #card .acts { display: flex; gap: 8px; margin-top: 12px; }
+  .btn { padding: 9px 14px; border-radius: 12px; border: 1px solid var(--panel-border); background: rgba(255,255,255,0.07); cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #111; border-color: transparent; font-weight: 600; }
+  .needs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .needs span { display: flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; border-radius: 999px; background: rgba(255,255,255,0.06); font-size: 12px; }
+  .bar-mini { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; width: 60px; flex: none; }
+  .bar-mini i { display: block; height: 100%; background: var(--ok); }
+
+  /* settings */
+  #settings { position: fixed; inset: 0; z-index: 20; display: none; background: rgba(5,10,15,0.5); }
+  #settings.open { display: block; }
+  #settings .sheet { position: absolute; left: 0; right: 0; bottom: 0; top: calc(40px + var(--safe-top)); background: var(--panel-solid);
+    border-radius: 20px 20px 0 0; border: 1px solid var(--panel-border); display: flex; flex-direction: column; }
+  /* big screens: settings as a narrow column on the right; the map stays visible and usable */
+  @media (min-width: 760px) {
+    #settings { background: none; pointer-events: none; }
+    #settings .sheet { pointer-events: auto; left: auto; right: 10px; top: calc(10px + var(--safe-top)); bottom: calc(10px + var(--safe-bottom));
+      width: 380px; border-radius: 18px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); }
+    #card { right: auto; width: 420px; }
+  }
+  #settings header { display: flex; align-items: center; padding: 14px 16px 10px; border-bottom: 1px solid var(--panel-border); }
+  #settings header h2 { margin: 0; font-size: 17px; }
+  #settings header .btn { margin-left: auto; }
+  #settings .body { overflow-y: auto; padding: 4px 16px calc(24px + var(--safe-bottom)); -webkit-overflow-scrolling: touch; }
+  #settings h4 { margin: 18px 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  #settings .hint { font-size: 12px; color: var(--muted); margin: -2px 0 6px; }
+  .list { border-radius: 14px; background: rgba(255,255,255,0.04); overflow: hidden; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-top: 1px solid var(--panel-border); min-height: 46px; }
+  .item:first-child { border-top: 0; }
+  .item .grow { flex: 1; }
+  .item select { font: inherit; font-size: 15px; color: var(--text); background: transparent; border: 0; text-align: right; outline: none; }
+  .toggle { width: 46px; height: 28px; border-radius: 999px; background: rgba(255,255,255,0.15); position: relative; border: 0; flex: none; cursor: pointer; transition: background .15s; }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .toggle.on { background: var(--ok); }
+  .toggle.on::after { transform: translateX(18px); }
+  .pin { width: 32px; height: 32px; border: 0; background: none; font-size: 18px; color: var(--muted); cursor: pointer; flex: none; }
+  .pin.on { color: var(--accent); }
+  .matrix { display: grid; grid-template-columns: 1fr auto auto; gap: 0; }
+  .matrix .h { font-size: 11px; color: var(--muted); padding: 6px 8px; text-align: center; }
+  .matrix .cell { padding: 6px 8px; display: flex; align-items: center; justify-content: center; border-top: 1px solid var(--panel-border); }
+  .matrix .name { padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--panel-border); }
+  .tiny { display: flex; gap: 8px; margin-top: 8px; }
+
+  /* transport icons */
+  .mi { width: 16px; height: 16px; flex: none; vertical-align: -3px; }
+  #card .kind .mi { width: 13px; height: 13px; margin-right: 5px; vertical-align: -2px; }
+  #card .r .num .mi { width: 17px; height: 17px; color: var(--muted); }
+  #results .sub .mi { width: 14px; height: 14px; margin-right: 4px; vertical-align: -3px; }
+  .matrix .name .mi { width: 18px; height: 18px; color: var(--muted); }
+  .matrix .na { color: var(--muted); opacity: .5; }
+  .matrix button.h { background: none; border: 0; font: inherit; font-size: 11px; color: var(--accent); cursor: pointer; }
+  #card .r.idle { opacity: .6; }
+  #card .r.more .grow { color: var(--muted); }
+
+  /* settings: section headers with bulk buttons, reset */
+  .sh { display: flex; align-items: baseline; gap: 6px; margin: 18px 0 6px; }
+  #settings .sh h4 { margin: 0; }
+  .sa { margin-left: auto; display: flex; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
+  .lnk { background: none; border: 0; color: var(--accent); font: inherit; font-size: 13px; padding: 4px 7px; border-radius: 8px; cursor: pointer; }
+  .lnk:disabled { color: var(--muted); opacity: .45; cursor: default; }
+  .resetall { margin-top: 16px; }
+  .item .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .chip.resetchip { color: var(--accent); border-color: rgba(255,204,77,0.55); }
+  /* industry cargo: inputs → outputs */
+  .cflow { display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; }
+  .cflow .ci { display: inline-flex; }
+  .cflow img.ic, .cflow .sw { width: 18px; height: 18px; }
+  .cflow .sw.round { width: 12px; height: 12px; margin: 3px; }
+  .cflow .arr { color: var(--muted); margin: 0 3px; font-size: 13px; }
+  .kindrow .grow { display: flex; flex-direction: column; gap: 4px; }
+  #results .sub .cflow img.ic { width: 16px; height: 16px; }
+  /* compass: shows where north is on a turned map; tap = north up */
+  #compass { position: fixed; right: 10px; top: calc(62px + var(--safe-top)); z-index: 5; width: 42px; height: 42px; }
+  #compass[hidden] { display: none; }
+  #compass svg { width: 26px; height: 26px; transition: transform .12s linear; }
+  .r.tap { cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+
+<div id="empty"><div><b data-t="empty.title"></b><span data-t="empty.body"></span></div></div>
+
+<div class="bar top">
+  <div id="status" class="pill"><span class="dot"></span><span id="statusText"></span></div>
+  <div class="search">
+    <input id="q" class="pill" type="search" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div id="results" class="pill"></div>
+  </div>
+</div>
+
+<button id="compass" class="iconbtn pill" hidden>
+  <svg viewBox="0 0 24 24"><path d="M12 2.5l4.2 9.5h-8.4z" fill="#f05a5a"/><path d="M12 21.5l-4.2-9.5h8.4z" fill="#c9d2db"/><circle cx="12" cy="12" r="1.6" fill="#0f1720"/></svg>
+</button>
+<div id="legend" class="pill"></div>
+<div id="card" class="pill"></div>
+
+<div class="bar bottom">
+  <div id="quick" class="chips"></div>
+  <button id="btnFitWidth" class="iconbtn pill">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg>
+  </button>
+  <button id="btnFit" class="iconbtn pill">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+  <button id="btnFollow" class="iconbtn pill">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+  <button id="btnSettings" class="iconbtn pill">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+  </button>
+</div>
+
+<div id="settings"><div class="sheet">
+  <header><h2 data-t="set.title"></h2><button id="setClose" class="btn primary" data-t="set.close"></button></header>
+  <div class="body" id="setBody"></div>
+</div></div>
+
+<div id="toast" class="pill"></div>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
+
+

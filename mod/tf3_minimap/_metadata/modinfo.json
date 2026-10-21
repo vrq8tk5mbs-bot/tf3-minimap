@@ -1,0 +1,15 @@
+{
+    "authors": [
+        {
+            "name": "Markus",
+            "role": "CREATOR"
+        }
+    ],
+    "description": "See your Transport Fever 3 world live on your phone or tablet while you play - like a second screen.\n\nWhat you get:\n- Live map: terrain, water, roads and tracks, towns with population, industries with the cargo they accept and produce, all stations and lines along their real routes, vehicles moving.\n- Tap anything for details: line load and active cargo, interval, station catchment, industry production.\n- Tap a place or a vehicle and the game camera jumps there / follows it.\n- Filters by transport type, passengers/cargo, industry types; any map rotation; km or miles; export the network as SVG.\n- 13 languages (same as the game).\n\nHow it works:\nThis mod only writes map data to the game's save folder. A small free companion app on the same computer turns it into a web page; open it on any phone or tablet in the same Wi-Fi. Nothing is sent to the internet.\n\nInstall:\n1. Subscribe to this mod and enable it when you load your save.\n2. Download the companion app (Windows .exe, or Mac/Linux script): https://github.com/vrq8tk5mbs-bot/tf3-minimap/releases/latest\n3. Start the companion, open the address it shows on your phone.\n\nPC only (Windows, Mac, Linux / Steam Deck). Does NOT work on consoles - the companion app needs a computer next to the game.\nDoes not change gameplay (cosmetic script mod).\n\n---\n\nRU: Живая карта вашего мира Transport Fever 3 на телефоне или планшете - второй экран во время игры. Рельеф, дороги и пути, города с населением, производства с иконками грузов, все станции и линии по реальным маршрутам, движущийся транспорт. Нажатие - подробности и прыжок камеры игры. Фильтры, поворот карты, км/мили, экспорт схемы в SVG.\nМод пишет данные в папку сохранений игры; бесплатная программа-компаньон на том же компьютере показывает их как веб-страницу для телефона в той же Wi-Fi сети. Только ПК, на консолях не работает.\nКомпаньон: https://github.com/vrq8tk5mbs-bot/tf3-minimap/releases/latest",
+    "name": "Minimap Companion",
+    "summary": "Live map of your game on your phone or tablet: lines, stations, vehicles, industries. Tap to move the camera. PC only.",
+    "tags": [
+        "Script Mod"
+    ],
+    "url": "https://github.com/vrq8tk5mbs-bot/tf3-minimap"
+}

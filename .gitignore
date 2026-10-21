@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+companion/trails.json
+companion/icons_report.json
+build/
+dist/
+out/
+pack/
+*.spec
+.DS_Store
