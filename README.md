@@ -51,7 +51,7 @@ Anyone in the same Wi-Fi who knows the address can see the map and move the came
   To publish an update: copy the folder into `<Steam>/userdata/<id>/3493540/local/staging_area/`, raise `revision` in `mod.json`, restart the game, *Mod Manager → My Mods*, and upload only if it says *"The existing mod on mod.io will be updated."*
 - `companion/` — `tf3map_server.py` (web server), `tf3map_probe.py` (file channel, Lua data reader, command line probe), `web/` (the page).
 - `test/` — runs the real mod Lua against a fake game API (`pip install lupa`): `python3 test/fake_game.py <folder>`, then `python3 companion/tf3map_server.py --userdata <folder>`.
-- Releases: push a tag `v*`; GitHub Actions builds the Windows program and the zips.
+- Releases: set `VERSION` in `companion/tf3map_server.py`, push to the `release` branch (or run the *release* workflow by hand); GitHub Actions builds the Windows program and the zips and publishes release `v<VERSION>`.
 
 ## Русский
 
