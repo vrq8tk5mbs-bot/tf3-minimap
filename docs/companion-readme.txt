@@ -1,7 +1,8 @@
 TF3 Minimap companion
 =====================
 
-Shows your Transport Fever 3 game as a live map on a phone or tablet.
+Shows your Transport Fever 3 game as a live map in a web browser:
+on a second monitor, a phone or a tablet.
 Needs the "Minimap Companion" mod (mod.io) enabled in your save.
 
 START
@@ -11,8 +12,10 @@ START
                  if macOS offers to install developer tools / Python - accept, then start again)
   Linux / Deck: run ./start-minimap-linux.sh (needs python3; Steam Deck: in Desktop Mode)
 
-Then open the address the window shows (http://192.168.x.x:8765) on your phone,
-in the same Wi-Fi as the computer. Keep the window open while you play.
+Then open in a browser:
+  - on this computer (e.g. on a second monitor): http://localhost:8765
+  - on a phone or tablet in the same Wi-Fi: the http://192.168.x.x:8765 address the window shows
+Keep the window open while you play.
 
 FIRST START ON WINDOWS
   "Windows protected your PC": click "More info" > "Run anyway" (the program is not signed).
@@ -44,7 +47,8 @@ PRIVACY
 Компаньон TF3 Minimap
 =====================
 
-Показывает игру Transport Fever 3 живой картой на телефоне или планшете.
+Показывает игру Transport Fever 3 живой картой в браузере:
+на втором мониторе, телефоне или планшете.
 Нужен мод «Minimap Companion» (mod.io), включённый в сохранении.
 
 ЗАПУСК
@@ -54,7 +58,9 @@ PRIVACY
                  инструменты разработчика / Python - согласиться и запустить снова)
   Linux / Deck: ./start-minimap-linux.sh (нужен python3; Steam Deck - в режиме рабочего стола)
 
-Откройте на телефоне адрес из окна (http://192.168.x.x:8765), телефон в той же Wi-Fi сети.
+Откройте в браузере:
+  - на этом компьютере (например, на втором мониторе): http://localhost:8765
+  - на телефоне или планшете в той же Wi-Fi сети: адрес http://192.168.x.x:8765 из окна
 Окно не закрывать, пока играете.
 
 ПЕРВЫЙ ЗАПУСК НА WINDOWS

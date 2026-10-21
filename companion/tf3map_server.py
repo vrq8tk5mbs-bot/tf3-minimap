@@ -8,7 +8,8 @@ commands. Python 3 standard library only.
     python3 tf3map_server.py            # port 8765
     python3 tf3map_server.py --port 9000
 
-Then open the printed URL on a phone/tablet in the same Wi-Fi.
+Then open the printed URL in a browser: on this computer (e.g. a second monitor)
+or on a phone/tablet in the same Wi-Fi.
 """
 
 import argparse
@@ -655,7 +656,7 @@ def lan_addresses():
     return addrs, host
 
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 def fail(msg):
@@ -699,11 +700,12 @@ def main():
         fail(f"Cannot open port {args.port} ({e}).\n"
              f"Is the companion already running? Close the other window, or start with --port {args.port + 1}.")
     addrs, host = lan_addresses()
-    print("\nOpen on your phone or tablet (same Wi-Fi as this computer):")
+    print("\nOpen the map in a browser:")
+    print(f"  on this computer (e.g. a second monitor):  http://localhost:{args.port}")
+    print("  on a phone or tablet in the same Wi-Fi:")
     for a in addrs:
-        print(f"  http://{a}:{args.port}")
-    print(f"  http://{host}:{args.port}")
-    print(f"On this computer: http://localhost:{args.port}\n")
+        print(f"    http://{a}:{args.port}")
+    print(f"    http://{host}:{args.port}\n")
     print("Keep this window open while you play. Ctrl+C or closing the window stops it.")
     try:
         srv.serve_forever()
