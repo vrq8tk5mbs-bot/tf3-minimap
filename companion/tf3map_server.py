@@ -46,6 +46,7 @@ def data_dir():
     os.makedirs(d, exist_ok=True)
     return d
 
+
 POLL_INTERVAL = 0.1
 HEARTBEAT = 15.0
 # Files the client fetches from /data/<name> when the SSE "versions" event says they changed.
