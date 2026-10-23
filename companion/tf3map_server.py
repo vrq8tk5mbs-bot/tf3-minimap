@@ -297,6 +297,7 @@ class Trails:
         self.lines = {}
         self.saved_at = 0.0
         self.dirty = False
+        self.save_warned = False
         try:
             with open(self.FILE, encoding="utf-8") as f:
                 self.lines = json.load(f).get("lines", {})
@@ -306,14 +307,30 @@ class Trails:
     def _save(self, force=False):
         if not self.dirty or (not force and time.time() - self.saved_at < 30):
             return
+        self.saved_at = time.time()   # also after a failure: try again in 30 s, not on every update
+        tmp = f"{self.FILE}.{os.getpid()}.tmp"
         try:
-            tmp = self.FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"lines": self.lines}, f)
-            os.replace(tmp, self.FILE)
-            self.saved_at, self.dirty = time.time(), False
+            for attempt in range(5):
+                try:
+                    os.replace(tmp, self.FILE)
+                    break
+                except PermissionError:   # Windows: antivirus or the search indexer holds the file for a moment
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.1 * (attempt + 1))
+            self.dirty = False
+            self.save_warned = False
         except OSError as e:
-            print("trails: cannot save", e, file=sys.stderr)
+            if not self.save_warned:   # one line, not a stream of them
+                print(f"note: ship courses not saved yet ({e.strerror or e}); retrying every 30 s. "
+                      "The map is not affected.", file=sys.stderr)
+                self.save_warned = True
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     @staticmethod
     def _wanted(lines_data, paths_data):
@@ -656,7 +673,7 @@ def lan_addresses():
     return addrs, host
 
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 
 def fail(msg):
