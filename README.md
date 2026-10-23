@@ -24,7 +24,7 @@ The companion (Python, no extra packages) serves the page on this computer and t
 
 ## Install
 
-1. **Mod**: subscribe to **Minimap Companion** on mod.io (in the game: Mods) and enable it when you load your save.
+1. **Mod**: subscribe to [**Minimap Companion** on mod.io](https://mod.io/g/transportfever3/m/minimap-companion) (in the game: Mods) and enable it when you load your save.
    Manual install: unzip `tf3_minimap-mod-manual-install.zip` into `<Steam>/userdata/<your id>/3493540/local/mods/`.
 2. **Companion**: download from [Releases](../../releases/latest):
    - Windows: `TF3-Minimap-Windows.zip` — unzip, double-click `TF3 Minimap.exe` (no Python needed).
@@ -62,7 +62,7 @@ Anyone in the same Wi-Fi who knows the address can see the map and move the came
 Только ПК (Windows, Mac, Linux / Steam Deck); на консолях не работает.
 
 **Установка**
-1. Подпишитесь на мод **Minimap Companion** на mod.io (в игре: Моды) и включите его при загрузке сохранения.
+1. Подпишитесь на мод [**Minimap Companion** на mod.io](https://mod.io/g/transportfever3/m/minimap-companion) (в игре: Моды) и включите его при загрузке сохранения.
 2. Скачайте компаньон в [Releases](../../releases/latest): Windows — `TF3-Minimap-Windows.zip`, запуск `TF3 Minimap.exe` (Python не нужен; при первом запуске «Подробнее → Выполнить в любом случае» и разрешить «Частные сети» в брандмауэре). Mac/Linux — `TF3-Minimap-Mac-Linux.zip`, нужен Python 3.
 3. Откройте в браузере адрес из окна компаньона: на втором мониторе того же компьютера — `http://localhost:8765`, на телефоне или планшете в той же Wi-Fi сети — адрес `http://192.168.x.x:8765`.
 
