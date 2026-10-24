@@ -2081,8 +2081,19 @@ function updateStatus() {
   const fresh = performance.now() - S.lastLiveAt < 3000;
   el.className = "pill " + (!S.sseOk ? "" : fresh ? "ok" : "stale");
   txt.textContent = !S.sseOk ? t("status.noLink") : fresh ? t("status.game") : t("status.silent");
+  // Companion reachable but the game sends nothing (mod not enabled in this save, main menu, loading):
+  // say once per silent spell what to check. Tapping the status pill shows it again.
+  const now = performance.now();
+  if (!S.sseOk || fresh) { S.silentSince = 0; S.silentHinted = false; }
+  else if (!S.silentSince) S.silentSince = now;
+  else if (!S.silentHinted && now - S.silentSince > 10000) { S.silentHinted = true; toast(t("hint.silent"), false, 9000); }
 }
 setInterval(updateStatus, 1000);
+document.getElementById("status").onclick = () => {
+  const fresh = performance.now() - S.lastLiveAt < 3000;
+  if (!S.sseOk) toast(t("hint.noLink"), true, 9000);
+  else if (!fresh) toast(t("hint.silent"), false, 9000);
+};
 
 let toastTimer = 0;
 function toast(text, isErr, ms) {

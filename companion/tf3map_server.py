@@ -49,6 +49,7 @@ def data_dir():
 
 
 POLL_INTERVAL = 0.1
+GAME_SILENT_AFTER = 30  # seconds without the live file changing -> tell the player what to check
 HEARTBEAT = 15.0
 # Files the client fetches from /data/<name> when the SSE "versions" event says they changed.
 DATA_FILES = ("meta", "stations", "lines", "paths", "veh", "towns", "flows",
@@ -428,6 +429,7 @@ class State:
         self.version = 0  # bumped on every change
         self._mtimes = {}
         self.cmd_lock = threading.Lock()
+        self._silent_noted = False   # "no data from the game" already printed for this silent spell
 
     def _changed(self, name):
         try:
@@ -439,8 +441,28 @@ class State:
             return True
         return False
 
+    def _check_game_alive(self):
+        """Print once when the game stops writing the live file (~10x a second while a save is open),
+        and once when it comes back. Uses the file's age, so an old file from last session counts as silent."""
+        try:
+            age = time.time() - os.stat(probe.path_of("live")).st_mtime
+        except OSError:
+            age = float("inf")
+        if age > GAME_SILENT_AFTER and not self._silent_noted:
+            self._silent_noted = True
+            print(f"\nNo data from the game for {GAME_SILENT_AFTER} s.\n"
+                  "  Load a save and check that Minimap Companion is enabled in that save's mod list.\n"
+                  "  (Normal while the game is in the main menu or loading. Keep this window open;\n"
+                  "  the map updates as soon as the game sends data.)", flush=True)
+        elif age <= GAME_SILENT_AFTER and self._silent_noted:
+            self._silent_noted = False
+            print("Game connected - data is coming in.", flush=True)
+
     def poll_forever(self):
+        started = time.time()
         while True:
+            if time.time() - started > GAME_SILENT_AFTER:
+                self._check_game_alive()
             updated = False
             for name in ("live", "world", "status"):
                 if self._changed(name):
@@ -673,7 +695,7 @@ def lan_addresses():
     return addrs, host
 
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 
 def fail(msg):

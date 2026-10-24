@@ -3,6 +3,20 @@
 Every entry says first **what players need to do**: update the mod, download a new companion, or nothing.
 The mod comes from mod.io (the game updates it); the companion comes from [GitHub Releases](https://github.com/vrq8tk5mbs-bot/tf3-minimap/releases/latest).
 
+## 1.1.1 — 2026-10-24
+
+**What you need to do**
+- **Windows**: download the new companion (`TF3-Minimap-Windows.zip`), close the old companion window, replace the old folder, start `TF3 Minimap.exe` again.
+- **Mac / Linux**: download the new companion zip, close the old companion, replace the old folder, start it again.
+- **Mod (mod.io)**: unchanged, nothing to do. No game restart needed. Your saves are not affected.
+
+**Changes**
+- "Game is silent" now says what to check. The map shows the last known map even when the game sends nothing, which looked like a broken connection. Usually the save you loaded doesn't have the mod enabled. After 10 seconds of silence the map shows a hint: load a save and check that Minimap Companion is enabled in that save's mod list. Tap the status at the top left to see it again.
+- The companion window says the same after 30 seconds without data from the game, and "Game connected" when data comes in again.
+- The status said "No connection to **Mac**" on every computer. It now says "No connection to computer", and tapping it explains what to check (companion running, same Wi-Fi).
+
+**Что делать (RU)**: скачать новый компаньон (Windows и Mac/Linux) и заменить папку. Мод — ничего, игру перезапускать не нужно.
+
 ## 1.1.0 — 2026-10-24
 
 **What you need to do**
