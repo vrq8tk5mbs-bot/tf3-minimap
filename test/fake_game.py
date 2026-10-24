@@ -40,7 +40,8 @@ TOWNS = [("Harbin", -4600, 30400, 900), ("Manila", 2100, -30400, 1200), ("Tokyo"
          ("Busan", -12000, -18000, 600)]
 INDUSTRIES = [("Lucknow Logging Camp", "forest", 484, 24292), ("Xi'an Saw Mill", "saw_mill", -4440, 13600 - 900),
               ("Kolkata Farm", "farm", 5900, 12900), ("Omsk Oil Well", "oil_well", -9800, 3100),
-              ("Osaka Refinery", "oil_refinery", 9900, -7000)]
+              ("Osaka Refinery", "oil_refinery", 9900, -7000),
+              ("Busan Logging Camp", "forest", -11500, -17000), ("Tokyo Saw Mill", "saw_mill", 12600, 8900)]
 
 ROAD_T, TRACK_T = 0, 1
 NORMAL, BRIDGE, TUNNEL = 0, 1, 2

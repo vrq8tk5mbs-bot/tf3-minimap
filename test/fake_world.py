@@ -178,7 +178,10 @@ def install(g):
     def log_for_target(src, tgt, log_type, cargo):
         if log_type != "delivered":
             raise lua.eval("error")("unknown log type " + str(log_type))
-        return 420 if (inds[ind_of_stock[src]][1], inds[ind_of_stock[tgt]][1]) in (("forest", "saw_mill"), ("oil_well", "oil_refinery")) else 0
+        a, b = inds[ind_of_stock[src]], inds[ind_of_stock[tgt]]
+        if "Busan" in a[0] or "Tokyo" in b[0]:
+            return 0   # the second logging camp / saw mill have no deliveries yet: chain candidates only
+        return 420 if (a[1], b[1]) in (("forest", "saw_mill"), ("oil_well", "oil_refinery")) else 0
 
     # ------------------------------------------------------------- towns
     towns = g.towns

@@ -99,6 +99,7 @@ const SET = {
   lineTags: recall("lineTags", true),
   rotation: recall("rotation", recall("rotate", false) ? "auto" : 0),   // degrees clockwise, or "auto" = turn to fit the screen
   units: recall("units", "km"),
+  chain: recall("chain", null),   // "Only this chain" in effect: { kind, prev: hidden types before, ind: industries layer before }
 };
 if (!MAP_STYLES[SET.mapStyle]) SET.mapStyle = "natural";
 for (const c of CATS) SET.lineFilter[c.key] = { p: true, c: true, ...(SET.lineFilter[c.key] || {}) };
@@ -106,6 +107,7 @@ function saveSettings() {
   store("lang", SET.lang); store("layers", SET.layers); store("pins", SET.pins); store("lineFilter", SET.lineFilter);
   store("hiddenKinds", [...SET.hiddenKinds]); store("showPop", SET.showPop); store("showNeeds", SET.showNeeds); store("follow", SET.follow);
   store("mapStyle", SET.mapStyle); store("lineTags", SET.lineTags); store("rotation", SET.rotation); store("units", SET.units);
+  store("chain", SET.chain);
 }
 
 // ---- filter defaults / reset
@@ -113,13 +115,14 @@ function lineFilterAllOn() { return CATS.every(c => SET.lineFilter[c.key].p && S
 function layersAreDefault(keys) { return (keys || LAYERS.map(L => L.key)).every(k => !!SET.layers[k] === !!DEFAULT_LAYERS[k]); }
 // Filters the quick bar does not show: line filter, industry types, layers that are not pinned.
 function hiddenFiltersActive() {
-  return !lineFilterAllOn() || SET.hiddenKinds.size > 0 || !layersAreDefault(LAYERS.map(L => L.key).filter(k => !SET.pins.includes(k)));
+  return !lineFilterAllOn() || (SET.hiddenKinds.size > 0 && !SET.chain) || !layersAreDefault(LAYERS.map(L => L.key).filter(k => !SET.pins.includes(k)));
 }
 function filtersAreDefault() { return lineFilterAllOn() && SET.hiddenKinds.size === 0 && layersAreDefault(); }
 function resetFilters() {
   SET.layers = { ...DEFAULT_LAYERS };
   for (const c of CATS) SET.lineFilter[c.key] = { p: true, c: true };
   SET.hiddenKinds.clear();
+  SET.chain = null;
 }
 setLang(pickLang(SET.lang));
 
@@ -232,6 +235,91 @@ function cargoFlowHtml(io) {
   const inp = (io.inp || []).map(one).join(""), out = (io.out || []).map(one).join("");
   return `<span class="cflow">${inp}${inp && out ? `<span class="arr">→</span>` : ""}${out}</span>`;
 }
+
+// ---- cargo chains: who can supply an industry and who takes its cargo, from what each industry
+// accepts and produces (the game's own stock rules, so modded industries work too).
+// Everything a type accepts / produces, over all industries of that type.
+function kindIO(kind) {
+  const inp = new Set(), out = new Set();
+  for (const i of S.industries) {
+    if (i.kind !== kind) continue;
+    const io = industryCargo(i); if (!io) continue;
+    for (const c of io.inp || []) inp.add(c);
+    for (const c of io.out || []) out.add(c);
+  }
+  return { inp, out };
+}
+// A type plus the types that supply it (make one of its inputs) or take its cargo (accept one of its outputs).
+function chainKinds(kind) {
+  const me = kindIO(kind), keep = new Set([kind]);
+  for (const k of S.kinds) {
+    if (k.key === kind) continue;
+    const o = kindIO(k.key);
+    if ([...me.out].some(c => o.inp.has(c)) || [...me.inp].some(c => o.out.has(c))) keep.add(k.key);
+  }
+  return keep;
+}
+// Industry types filter: only this type and its direct partners.
+function showChain(kind) {
+  const keep = chainKinds(kind);
+  // remember what was shown before the first chain, so undo goes back there even after switching chains
+  SET.chain = SET.chain ? { ...SET.chain, kind } : { kind, prev: [...SET.hiddenKinds], ind: SET.layers.industries };
+  SET.hiddenKinds.clear();
+  for (const k of S.kinds) if (!keep.has(k.key)) SET.hiddenKinds.add(k.key);
+  SET.layers.industries = true;
+  saveSettings(); renderQuick(); renderCard(); draw();
+  if (document.getElementById("settings").classList.contains("open")) renderSettings();
+  toast(t("toast.chain").replace("{kinds}", [...keep].map(kindLabel).join(", ")), false, 2000);
+}
+// Cargo the chain is about: what the chain's type accepts and produces. Cached until the world reloads.
+let chainCargoCache = null;
+function chainCargo() {
+  const kind = SET.chain && SET.chain.kind;
+  const c = chainCargoCache;
+  if (c && c.kind === kind && c.inds === S.industries) return c.set;
+  const io = kindIO(kind);
+  chainCargoCache = { kind, inds: S.industries, set: new Set([...io.inp, ...io.out]) };
+  return chainCargoCache.set;
+}
+// Undo "Only this chain": industry types (and the industries layer) as they were before.
+function undoChain() {
+  if (!SET.chain) return;
+  SET.hiddenKinds = new Set(SET.chain.prev || []);
+  SET.layers.industries = SET.chain.ind !== false;
+  SET.chain = null;
+  saveSettings(); renderQuick(); renderCard(); draw();
+  if (document.getElementById("settings").classList.contains("open")) renderSettings();
+}
+// For one industry: per cargo, every industry (and, for its outputs, every town) that could be its partner,
+// nearest first. "linked" = the game already logs deliveries between the two.
+function chainPartners(ind) {
+  const io = industryCargo(ind);
+  if (!io || ind.x == null) return null;
+  const f = S.flows && S.flows.entity === ind.id && !S.flows.pending ? S.flows : null;
+  const linked = new Set([...((f && f.out) || []), ...((f && f.inn) || [])].map(([e, c]) => e + ":" + c));
+  const dist = o => Math.hypot(o.x - ind.x, o.y - ind.y);
+  const find = (cid, takes) => {
+    const res = [];
+    for (const o of S.industries) {
+      if (o.id === ind.id || o.x == null) continue;
+      const oio = industryCargo(o); if (!oio) continue;
+      if ((takes ? oio.inp || [] : oio.out || []).includes(cid)) res.push({ o, d: dist(o), linked: linked.has(o.id + ":" + cid) });
+    }
+    if (takes) for (const tw of S.towns) {
+      if (tw.x == null) continue;
+      const d = S.townData.get(tw.id);
+      if (d && (d.needs || []).some(n => n[0] === cid)) res.push({ o: tw, town: true, d: dist(tw), linked: linked.has(tw.id + ":" + cid) });
+    }
+    return res.sort((a, b) => b.linked - a.linked || a.d - b.d);
+  };
+  return { out: (io.out || []).map(cid => ({ cid, list: find(cid, true) })), inp: (io.inp || []).map(cid => ({ cid, list: find(cid, false) })) };
+}
+const CHAIN_ROWS = 3;   // partners listed / drawn per cargo (plus every one already linked)
+function chainShown(list) {
+  const n = Math.max(CHAIN_ROWS, list.filter(p => p.linked).length);
+  return list.slice(0, n);
+}
+function partnerVisible(p) { return p.town ? SET.layers.towns : SET.layers.industries && !SET.hiddenKinds.has(p.o.kind); }
 // One cargo icon on the canvas (falls back to a dot in the cargo's colour until the PNG arrives).
 function drawCargoIcon(id, x, y, size) {
   const ic = cargoIcon(id);
@@ -252,6 +340,12 @@ function prepLine(L) {
     if (u.length === maxId + 1 && ids[0] === 1 && ids[ids.length - 1] === u.length) u = u.map(x => [x[0] - 1, x[1], x[2]]);
   }
   L.use = u.filter(x => x[2] > 0 || x[1] > 0);
+  // cargo the line has actually been seen carrying (universal trucks have capacity for everything)
+  if (L.id != null) {
+    let seen = LINE_SEEN.get(L.id);
+    if (!seen) LINE_SEEN.set(L.id, seen = new Set());
+    for (const x of L.use) if (x[1] > 0) seen.add(x[0]);
+  }
   const pid = passengerId();
   const modes = L.modes || [];
   if (L.use.length) {
@@ -276,12 +370,21 @@ function prepLine(L) {
   else cat = has("TRUCK") && (!has("BUS") || (L._cargo && !L._pass)) ? "truck" : "bus";
   L._cat = cat;
 }
+const LINE_SEEN = new Map();   // line id -> cargo ids seen loaded on it during this session
+// The line's cargo for chain filtering: what it has carried, else what it has room for.
+function lineCargoIds(L) {
+  if (!L._cat) prepLine(L);
+  const seen = LINE_SEEN.get(L.id);
+  return seen && seen.size ? [...seen] : (L.use || []).map(x => x[0]);
+}
 function lineCat(L) { if (!L._cat) prepLine(L); return L._cat; }
 function lineIsPass(L) { if (!L._cat) prepLine(L); return L._pass; }
 function lineIsCargo(L) { if (!L._cat) prepLine(L); return L._cargo; }
 function catOf(key) { return CATS.find(c => c.key === key) || CATS[2]; }
 function lineVisible(L) {
   if (!SET.layers.lines) return false;
+  // "Only this chain": just the lines that can carry the chain's cargo, so the chain stands out
+  if (SET.chain) { const cs = chainCargo(); if (!lineCargoIds(L).some(c => cs.has(c))) return false; }
   const c = catOf(lineCat(L)), f = SET.lineFilter[c.key];
   const p = c.kinds.includes("p") && f.p, cg = c.kinds.includes("c") && f.c;
   if (!lineIsPass(L) && !lineIsCargo(L)) return p || cg;   // no vehicles yet
@@ -976,7 +1079,31 @@ function drawCatchment() {
 function stationVisible(g) {
   if (!SET.layers.stations || g.x == null) return false;
   const ls = S.lines.filter(L => (L.stops || []).some(s => s[0] === g.id));
-  return !ls.length || ls.some(lineVisible);
+  // in chain mode a station with no lines only shows at an industry of the chain
+  if (!ls.length) return !SET.chain || chainStations().has(g.id);
+  return ls.some(lineVisible);
+}
+// Chain mode: stations next to a shown industry (an industry's own station sits right beside it).
+const CHAIN_STATION_DIST = 800;
+let chainStationsCache = null;
+function chainStations() {
+  const key = [SET.chain && SET.chain.kind, [...SET.hiddenKinds].join(","), SET.layers.industries].join("|");
+  const c = chainStationsCache;
+  if (c && c.key === key && c.groups === S.groups && c.inds === S.industries) return c.set;
+  const set = new Set();
+  const inds = SET.layers.industries ? S.industries.filter(i => i.x != null && !SET.hiddenKinds.has(i.kind)) : [];
+  for (const g of S.groups) {
+    if (g.x == null) continue;
+    if (inds.some(i => Math.abs(i.x - g.x) < CHAIN_STATION_DIST && Math.abs(i.y - g.y) < CHAIN_STATION_DIST && Math.hypot(i.x - g.x, i.y - g.y) < CHAIN_STATION_DIST)) set.add(g.id);
+  }
+  chainStationsCache = { key, groups: S.groups, inds: S.industries, set };
+  return set;
+}
+// Chain mode: a town matters if it needs the chain's cargo; the rest are drawn small and quiet.
+function townInChain(tw) {
+  if (!SET.chain) return true;
+  const d = S.townData.get(tw.id), cs = chainCargo();
+  return !!(d && (d.needs || []).some(n => cs.has(n[0])));
 }
 
 // Round (or, for cargo-only places, square) badge with a transport icon inside.
@@ -1120,6 +1247,11 @@ function drawTowns(placed) {
   for (const tw of towns) {
     const [x, y] = toScreen(tw.x, tw.y);
     if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
+    if (!townInChain(tw) && !(S.sel && S.sel.kind === "town" && S.sel.id === tw.id)) {
+      ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(235,240,245,0.45)"; ctx.fill();
+      continue;   // no name, no population, no collision box
+    }
     const r = Math.max(4, Math.min(11, Math.sqrt(tw.size || 100) * 0.32)) * Math.min(1.6, Math.max(0.8, S.view.scale * 60));
     const sel = S.sel && S.sel.kind === "town" && S.sel.id === tw.id;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -1249,6 +1381,32 @@ function entityName(id) {
   return "#" + id;
 }
 
+// Selected industry: thin dotted lines to its nearest possible partners (existing deliveries get drawFlows' arrows).
+function drawChain() {
+  if (!S.sel || S.sel.cardKind !== "industry") return;
+  const ind = S.industries.find(x => x.id === S.sel.id);
+  const cp = ind && chainPartners(ind);
+  if (!cp) return;
+  const [x0, y0] = toScreen(ind.x, ind.y);
+  const seen = new Set();
+  ctx.save();
+  ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]); ctx.lineCap = "round";
+  for (const { cid, list } of [...cp.out, ...cp.inp]) {
+    for (const p of chainShown(list)) {
+      if (p.linked || !partnerVisible(p)) continue;
+      const [x1, y1] = toScreen(p.o.x, p.o.y);
+      ctx.strokeStyle = cargoColor(cid); ctx.globalAlpha = 0.85;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      if (seen.has(p.o.id)) continue;
+      seen.add(p.o.id);
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(x1, y1, p.town ? 14 : 11, 0, Math.PI * 2); ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]);
+    }
+  }
+  ctx.restore();
+}
+
 function drawFlows() {
   const f = S.flows;
   if (!f || f.pending || !S.sel || f.entity !== S.sel.id) return;
@@ -1324,6 +1482,7 @@ function render() {
   drawTowns(placed);
   drawIndustryTags(placed);
   drawLineTags(placed);
+  drawChain();
   drawFlows();
   drawCamera();
   drawPulses();
@@ -1501,8 +1660,25 @@ function flowsSection() {
   let h = "";
   if ((f.inn || []).length) h += `<div class="sec">${escapeHtml(t("card.flowsIn"))}</div><div class="rows">${flowRows(f.inn)}</div>`;
   if ((f.out || []).length) h += `<div class="sec">${escapeHtml(t("card.flowsOut"))}</div><div class="rows">${flowRows(f.out, true)}</div>`;
-  if (!h && S.sel.cardKind !== "station") h = `<div class="sec">${escapeHtml(t("card.flowsIn"))}</div><div class="rows"><div class="r"><span class="num">${escapeHtml(t("card.noData"))}</span></div></div>`;
+  if (!h && S.sel.cardKind === "town") h = `<div class="sec">${escapeHtml(t("card.flowsIn"))}</div><div class="rows"><div class="r"><span class="num">${escapeHtml(t("card.noData"))}</span></div></div>`;
   return h;
+}
+
+// Nearest possible partners of an industry, per cargo: receivers of what it makes, suppliers of what it needs.
+function chainSection(ind) {
+  const cp = chainPartners(ind);
+  if (!cp || (!cp.out.length && !cp.inp.length)) return "";
+  const rows = groups => groups.map(({ cid, list }) => {
+    if (!list.length) return `<div class="r idle">${iconHtml(cid)}<span class="grow">${escapeHtml(cargoName(cid))}</span><span class="num">${escapeHtml(t("card.nonePartner"))}</span></div>`;
+    const shown = chainShown(list);
+    return shown.map(p => `<div class="r link" data-${p.town ? "town" : "industry"}="${p.o.id}" data-center="1">${iconHtml(cid)}`
+      + `<span class="grow">${p.linked ? "✓ " : ""}${escapeHtml(p.o.name || "#" + p.o.id)}</span><span class="num">${fmtLen(p.d)}</span></div>`).join("")
+      + (list.length > shown.length ? `<div class="r more"><span class="grow">${escapeHtml(t("card.morePartners").replace("{n}", list.length - shown.length))}</span></div>` : "");
+  }).join("");
+  let h = "";
+  if (cp.out.length) h += `<div class="sec">${escapeHtml(t("card.receivers"))}</div><div class="rows">${rows(cp.out)}</div>`;
+  if (cp.inp.length) h += `<div class="sec">${escapeHtml(t("card.suppliers"))}</div><div class="rows">${rows(cp.inp)}</div>`;
+  return h + `<div class="hint">${escapeHtml(t("card.chainHint"))}</div>`;
 }
 
 function renderCard() {
@@ -1541,7 +1717,10 @@ function renderCard() {
         + f.consumed.map(([cid, n]) => `<div class="r">${iconHtml(cid)}<span class="grow">${escapeHtml(cargoName(cid))}</span><span class="num">${fmtInt(n)}${t("card.perYear")}</span></div>`).join("") + `</div>`;
     } else if (ind.level) body += `<div class="stats">${stat("Level", ind.level)}</div>`;
     body += flowsSection();
-    acts = showBtn;
+    body += chainSection(ind);
+    acts = (SET.chain && SET.chain.kind === ind.kind
+      ? `<button class="btn" data-act="unchain">${escapeHtml(t("btn.unchain"))}</button>`
+      : `<button class="btn" data-act="chain">${escapeHtml(t("btn.chain"))}</button>`) + showBtn;
   } else if (sel.cardKind === "station") {
     const g = S.groupById.get(sel.id); if (!g) return select(null);
     kindLabelTxt = t("card.station"); kindIcon = iconSvg(stationCat(g)); title = g.name;
@@ -1612,6 +1791,8 @@ document.getElementById("card").addEventListener("click", e => {
       if (o) jumpTo(o);
     }
     if (act === "follow") command({ action: "focus", entity: S.sel.id });
+    if (act === "unchain") undoChain();
+    if (act === "chain") { const i = S.industries.find(x => x.id === S.sel.id); if (i) showChain(i.kind); }
     if (act === "more") { S.cardMore = !S.cardMore; renderCard(); }
     return;
   }
@@ -1620,8 +1801,18 @@ document.getElementById("card").addEventListener("click", e => {
   const sr = e.target.closest("[data-station]");
   if (sr) { const g = S.groupById.get(+sr.dataset.station); if (g) select(g, true); }
   const ir = e.target.closest("[data-industry]");
-  if (ir) { const i = S.industries.find(x => x.id === +ir.dataset.industry); if (i) select(i, false); }
+  if (ir) { const i = S.industries.find(x => x.id === +ir.dataset.industry); if (i) { if (ir.dataset.center) centerOn(i); select(i, false); } }
+  const tr = e.target.closest("[data-town]");
+  if (tr) { const tw = S.towns.find(x => x.id === +tr.dataset.town); if (tw) { if (tr.dataset.center) centerOn(tw); select(tw, false); } }
 });
+// Move the minimap (not the game camera) so the place is on screen; leaves the view alone if it already is.
+function centerOn(o) {
+  if (o.x == null) return;
+  const [x, y] = toScreen(o.x, o.y);
+  if (x > 40 && y > 80 && x < W - 40 && y < H - 120) return;
+  if (SET.follow) setFollow(false);
+  S.view.cx = o.x; S.view.cy = o.y;
+}
 
 // ================================================================ gestures
 
@@ -1726,7 +1917,9 @@ function renderQuick() {
   const box = document.getElementById("quick");
   const reset = hiddenFiltersActive()
     ? `<button class="chip pill resetchip" data-reset="1" title="${escapeHtml(t("set.resetAll"))}">↺ ${escapeHtml(t("set.filtersOn"))}</button>` : "";
-  const html = reset + SET.pins.map(key => {
+  const chain = SET.chain
+    ? `<button class="chip pill resetchip" data-unchain="1" title="${escapeHtml(t("btn.unchain"))}">${escapeHtml(t("set.chain"))}: ${escapeHtml(kindLabel(SET.chain.kind))} ✕</button>` : "";
+  const html = chain + reset + SET.pins.map(key => {
     const L = LAYERS.find(x => x.key === key);
     if (!L) return "";
     const n = layerCount(key);
@@ -1736,6 +1929,7 @@ function renderQuick() {
   if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
 }
 document.getElementById("quick").addEventListener("click", e => {
+  if (e.target.closest("[data-unchain]")) return undoChain();
   if (e.target.closest("[data-reset]")) {
     resetFilters(); saveSettings(); renderQuick(); draw(); toast(t("toast.reset"));
     if (document.getElementById("settings").classList.contains("open")) renderSettings();
@@ -1789,6 +1983,18 @@ function renderSettings() {
         + `<div class="cell">${cell("p")}</div><div class="cell">${cell("c")}</div>`;
     }).join("") + `</div></div>`;
 
+  if (S.kinds.length) {
+    const acts = S.kinds.length > 3 ? bulkBtn("kinds:all", t("set.all"), SET.hiddenKinds.size === 0) + bulkBtn("kinds:none", t("set.none"), S.kinds.every(k => SET.hiddenKinds.has(k.key))) : "";
+    h += secHead(t("set.industries"), acts) + `<div class="hint">${escapeHtml(t("set.chainHint"))}</div><div class="list">`
+      + S.kinds.map(k => {
+        const io = kindCargo(k.key);
+        return `<div class="item kindrow"><span class="grow"><span class="kname">${escapeHtml(kindLabel(k.key))} <span style="color:var(--muted)">${k.n}</span></span>`
+          + (io ? cargoFlowHtml(io) : `<span class="sw" style="background:${kindColor(k.key)}"></span>`) + `</span>`
+          + `<button class="lnk" data-chain="${k.key}">${escapeHtml(t("set.chain"))}</button>${tog(!SET.hiddenKinds.has(k.key), `data-kind="${k.key}"`)}</div>`;
+      }).join("")
+      + `</div>`;
+  }
+
   h += `<h4>${escapeHtml(t("set.map"))}</h4><div class="list">`
     + `<div class="item"><span class="grow">${escapeHtml(t("set.mapStyle"))}</span><select id="styleSel">`
     + Object.keys(MAP_STYLES).map(k => `<option value="${k}"${k === SET.mapStyle ? " selected" : ""}>${escapeHtml(t("style." + k))}</option>`).join("") + `</select></div>`
@@ -1802,16 +2008,6 @@ function renderSettings() {
     + `<div class="item"><span class="grow">${escapeHtml(t("set.showPop"))}</span>${tog(SET.showPop, `data-opt="showPop"`)}</div>`
     + `<div class="item"><span class="grow">${escapeHtml(t("set.showNeeds"))}</span>${tog(SET.showNeeds, `data-opt="showNeeds"`)}</div></div>`;
 
-  if (S.kinds.length) {
-    const acts = S.kinds.length > 3 ? bulkBtn("kinds:all", t("set.all"), SET.hiddenKinds.size === 0) + bulkBtn("kinds:none", t("set.none"), S.kinds.every(k => SET.hiddenKinds.has(k.key))) : "";
-    h += secHead(t("set.industries"), acts) + `<div class="list">`
-      + S.kinds.map(k => {
-        const io = kindCargo(k.key);
-        return `<div class="item kindrow"><span class="grow"><span class="kname">${escapeHtml(kindLabel(k.key))} <span style="color:var(--muted)">${k.n}</span></span>`
-          + (io ? cargoFlowHtml(io) : `<span class="sw" style="background:${kindColor(k.key)}"></span>`) + `</span>${tog(!SET.hiddenKinds.has(k.key), `data-kind="${k.key}"`)}</div>`;
-      }).join("")
-      + `</div>`;
-  }
 
   h += `<h4>${escapeHtml(t("set.export"))}</h4><div class="list">`
     + `<div class="item"><span class="grow">${escapeHtml(t("exp.geo"))}</span><button class="btn" data-exp="geo">SVG</button></div>`
@@ -1846,7 +2042,7 @@ document.getElementById("setBody").addEventListener("click", e => {
     const [what, how] = el.dataset.bulk.split(":");
     if (what === "layers") for (const L of LAYERS) SET.layers[L.key] = how === "all" ? true : how === "none" ? false : !!DEFAULT_LAYERS[L.key];
     if (what === "lines") for (const c of CATS) SET.lineFilter[c.key] = { p: how === "all", c: how === "all" };
-    if (what === "kinds") { SET.hiddenKinds.clear(); if (how === "none") for (const k of S.kinds) SET.hiddenKinds.add(k.key); }
+    if (what === "kinds") { SET.chain = null; SET.hiddenKinds.clear(); if (how === "none") for (const k of S.kinds) SET.hiddenKinds.add(k.key); }
   } else if (el.dataset.reset) {
     resetFilters();
     toast(t("toast.reset"));
@@ -1854,7 +2050,10 @@ document.getElementById("setBody").addEventListener("click", e => {
     SET[el.dataset.opt] = !SET[el.dataset.opt];
   } else if (el.dataset.kind) {
     const k = el.dataset.kind;
+    SET.chain = null;
     SET.hiddenKinds.has(k) ? SET.hiddenKinds.delete(k) : SET.hiddenKinds.add(k);
+  } else if (el.dataset.chain) {
+    return showChain(el.dataset.chain);
   } else if (el.dataset.exp) {
     return exportSvg(el.dataset.exp);
   } else return;
