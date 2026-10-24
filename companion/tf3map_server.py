@@ -19,6 +19,7 @@ import json
 import math
 import os
 import socket
+import stat
 import struct
 import sys
 import threading
@@ -51,6 +52,7 @@ def data_dir():
 POLL_INTERVAL = 0.1
 GAME_SILENT_AFTER = 30  # seconds without the live file changing -> tell the player what to check
 HEARTBEAT = 15.0
+READONLY_CHECK_EVERY = 30.0  # while the game is silent: look for read-only map files this often
 # Files the client fetches from /data/<name> when the SSE "versions" event says they changed.
 DATA_FILES = ("meta", "stations", "lines", "paths", "veh", "towns", "flows",
               "grid_terrain", "grid_noise", "grid_pollution")
@@ -413,6 +415,40 @@ class Trails:
 TRAILS = Trails()
 
 
+_readonly_failed = set()   # files we could not fix; reported once each
+
+
+def make_map_files_writable():
+    """Clear the read-only flag on the mod's own tf3map_*.lua files. Returns how many were fixed.
+
+    Seen on Windows 11: the files had become read-only. The game then cannot overwrite them and says
+    nothing - not even into tf3map_status.lua, which is read-only too - so the map shows the last session
+    forever ("Game is silent"). Only our own files are touched. The mod retries every write, so the map
+    comes back within a second, without restarting the game."""
+    folder = os.path.join(probe.find_userdata(), probe.SUBDIR)
+    ro_attr = getattr(stat, "FILE_ATTRIBUTE_READONLY", 1)
+    fixed = 0
+    for path in glob.glob(os.path.join(folder, probe.PREFIX + "*.lua")):
+        try:
+            st = os.stat(path)
+            readonly = not (st.st_mode & stat.S_IWUSR) or bool(getattr(st, "st_file_attributes", 0) & ro_attr)
+            if not readonly:
+                continue
+            os.chmod(path, stat.S_IMODE(st.st_mode) | stat.S_IREAD | stat.S_IWUSR)  # on Windows: clears read-only
+            fixed += 1
+        except OSError as e:
+            name = os.path.basename(path)
+            if name not in _readonly_failed:
+                _readonly_failed.add(name)
+                print(f"\nCannot make {name} writable ({e}).\n"
+                      f"  Close the game, delete the files starting with {probe.PREFIX} in\n  {folder}\n"
+                      "  and start the game again - it creates them anew.", flush=True)
+    if fixed:
+        print(f"\nFixed {fixed} map file(s) marked read-only - the game could not update them,\n"
+              "  so the map kept showing an old state. It should update within seconds.", flush=True)
+    return fixed
+
+
 class State:
     """Latest data read from the mod's files, plus a condition to wake SSE clients."""
 
@@ -430,6 +466,7 @@ class State:
         self._mtimes = {}
         self.cmd_lock = threading.Lock()
         self._silent_noted = False   # "no data from the game" already printed for this silent spell
+        self._readonly_checked = 0.0   # last look for read-only map files
 
     def _changed(self, name):
         try:
@@ -452,9 +489,16 @@ class State:
             self._silent_noted = True
             print(f"\nNo data from the game for {GAME_SILENT_AFTER} s.\n"
                   "  Load a save and check that Minimap Companion is enabled in that save's mod list.\n"
+                  f"  Data folder: {os.path.join(probe.find_userdata(), probe.SUBDIR)}\n"
                   "  (Normal while the game is in the main menu or loading. Keep this window open;\n"
                   "  the map updates as soon as the game sends data.)", flush=True)
-        elif age <= GAME_SILENT_AFTER and self._silent_noted:
+        if age > GAME_SILENT_AFTER and time.time() - self._readonly_checked >= READONLY_CHECK_EVERY:
+            self._readonly_checked = time.time()
+            try:
+                make_map_files_writable()
+            except Exception as e:  # never let this stop the map
+                print("read-only check:", e, file=sys.stderr)
+        if age <= GAME_SILENT_AFTER and self._silent_noted:
             self._silent_noted = False
             print("Game connected - data is coming in.", flush=True)
 
@@ -695,7 +739,7 @@ def lan_addresses():
     return addrs, host
 
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 
 def fail(msg):
@@ -731,6 +775,10 @@ def main():
     except probe.UserdataNotFound as e:
         fail(str(e))
     print("Game folder (cargo icons):", find_game_dir() or "not found - the map works, cargo icons are plain dots")
+    try:
+        make_map_files_writable()
+    except Exception as e:  # never let this stop the companion
+        print("read-only check:", e, file=sys.stderr)
     threading.Thread(target=STATE.poll_forever, daemon=True).start()
 
     try:

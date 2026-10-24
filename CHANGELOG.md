@@ -3,6 +3,19 @@
 Every entry says first **what players need to do**: update the mod, download a new companion, or nothing.
 The mod comes from mod.io (the game updates it); the companion comes from [GitHub Releases](https://github.com/vrq8tk5mbs-bot/tf3-minimap/releases/latest).
 
+## 1.1.2 — 2026-10-24
+
+**What you need to do**
+- **Windows**: download the new companion (`TF3-Minimap-Windows.zip`), close the old companion window, replace the old folder, start `TF3 Minimap.exe` again.
+- **Mac / Linux**: download the new companion zip, close the old companion, replace the old folder, start it again.
+- **Mod (mod.io)**: unchanged, nothing to do. No game restart needed. Your saves are not affected.
+
+**Changes**
+- Fixes "Game is silent" when the mod is enabled. On one Windows 11 PC the mod's data files had become read-only. The game then cannot update them and shows no error, so the map kept showing an old state. The companion now clears the read-only flag on its own `tf3map_` files when it starts and while the game is silent, and says so in its window. The map comes back within seconds, without restarting the game. Other files are never touched.
+- When the game is silent, the companion window also shows the folder it reads the data from.
+
+**Что делать (RU)**: скачать новый компаньон (Windows и Mac/Linux) и заменить папку. Мод — ничего, игру перезапускать не нужно.
+
 ## 1.1.1 — 2026-10-24
 
 **What you need to do**
