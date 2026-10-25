@@ -3,6 +3,21 @@
 Every entry says first **what players need to do**: update the mod, download a new companion, or nothing.
 The mod comes from mod.io (the game updates it); the companion comes from [GitHub Releases](https://github.com/vrq8tk5mbs-bot/tf3-minimap/releases/latest).
 
+## 1.2.0 — 2026-10-25
+
+**What you need to do**
+- **Windows**: download the new companion (`TF3-Minimap-Windows.zip`), close the old companion window, replace the old folder, start `TF3 Minimap.exe` again.
+- **Mac / Linux**: download the new companion zip, close the old companion, replace the old folder, start it again.
+- **Mod (mod.io)**: unchanged, nothing to do. No game restart needed. Your saves are not affected.
+
+**Changes**
+- **Focus**: show only what you are working on. Tap **◎ Focus** at the bottom and pick **Rail**, **Road**, **Water** or **Air**: only those lines, their stations and vehicles stay on the map. The line card has **Only this line**, the station card **Only this station** (the station plus every line through it).
+- Roads, tracks, towns and industries stay as a faint background, so you still see where things are. Town names stay, muted.
+- One focus at a time. The chip at the bottom shows it (e.g. **◎ Rail ✕**); ✕ brings back the filters you had before the first focus, even after switching between focuses. The focus survives a page reload.
+- *Only this chain* (cargo chains from 1.1.0) is now one kind of focus and works the same way.
+
+**Что делать (RU)**: скачать новый компаньон (Windows и Mac/Linux) и заменить папку. Мод — ничего, игру перезапускать не нужно.
+
 ## 1.1.2 — 2026-10-24
 
 **What you need to do**
