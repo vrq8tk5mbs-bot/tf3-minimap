@@ -435,7 +435,7 @@ end
 -- Coordinates are whole metres.
 -- A track edge with signals is followed by one entry per signal (5 fields, so companions before 1.3 skip them):
 --   g<type>[r], x, y, hx, hy
---   type: the game's Signal.Type value (SIGNAL, ONE_WAY_SIGNAL, WAYPOINT);  r: the signal's edgePr flag was true
+--   type: the game's Signal.Type value (0 SIGNAL, 1 ONE_WAY_SIGNAL, 2 WAYPOINT);  r: the signal's edgePr flag was true
 --   x, y: position;  hx, hy: direction trains pass the signal in, unit vector x100
 
 local N = {
@@ -546,7 +546,7 @@ local function pairPart(pr, i)
 end
 
 -- Signals on a track edge, as signal entries of the network export (see above). Each signal sits on one
--- lane of the edge; it applies to trains running along that lane, or against it when edgePr's flag is set.
+-- lane of the edge; it applies to trains running along that lane when edgePr's flag is set, else against it.
 local SIGDIAG = 0
 local function readSignals(e, en)
 	local objs = toArray(e.objects)
@@ -568,7 +568,9 @@ local function readSignals(e, en)
 					if okL and lx then
 						if lx * tx + ly * ty < 0 then hx, hy = -tx, -ty end   -- the lane runs node1 -> node0
 					end
-					if rev == true then hx, hy = -hx, -hy end
+					-- edgePr's flag is true when the signal applies along its lane, false when against it
+					-- (checked in the game 2026-10-25: with the opposite reading every arrow pointed backwards)
+					if rev ~= true then hx, hy = -hx, -hy end
 					local len = math.sqrt(hx * hx + hy * hy)
 					if len > 0 then hx, hy = hx / len, hy / len end
 					local tnum = tonumber(sg.type)

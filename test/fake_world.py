@@ -234,7 +234,8 @@ def install(g):
                                   2: T({"geometry": T({"length": length, "edge": e, "rev": True})})})})
         if ct == CT["SIGNAL_LIST"] and e in signals:
             d = signals[e]
-            return T({"signals": T({1: T({"edgePr": T({1: T({"entity": d["edge"], "index": d["lane"]}), 2: d["rev"]}),
+            # the game's flag is true when the signal applies along its lane; d["rev"] here means against it
+            return T({"signals": T({1: T({"edgePr": T({1: T({"entity": d["edge"], "index": d["lane"]}), 2: not d["rev"]}),
                                           "type": d["type"], "state": 0, "stateTime": 0})})})
         if ct == CT["EDGE_OBJECT"] and e in signals:
             return T({"param": signals[e]["param"], "edgeObjectConstruction": "::/railroad/signal_new_block.mdl"})
