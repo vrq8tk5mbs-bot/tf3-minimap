@@ -433,6 +433,10 @@ end
 --   kind: r = track, s = street, u = unknown;  tpl: index into manifest.templates (1-based)
 --   z: 0 normal, 1 bridge, 2 tunnel;  a/b: cubic Bezier control points (omitted when straight)
 -- Coordinates are whole metres.
+-- A track edge with signals is followed by one entry per signal (5 fields, so companions before 1.3 skip them):
+--   g<type>[r], x, y, hx, hy
+--   type: the game's Signal.Type value (SIGNAL, ONE_WAY_SIGNAL, WAYPOINT);  r: the signal's edgePr flag was true
+--   x, y: position;  hx, hy: direction trains pass the signal in, unit vector x100
 
 local N = {
 	phase = "idle",       -- idle -> scan -> sweep -> write -> idle
@@ -457,10 +461,33 @@ local function netEnums()
 	if N.enum then return N.enum end
 	local rt, rtSrc = resolveEnum("RoadType")
 	local et, etSrc = resolveEnum("BaseEdgeType")
+	local ot, otSrc = resolveEnum("EdgeObjectType")
 	N.enum = {
 		track = rt and rt.TRACK, street = rt and rt.STREET,
 		bridge = et and et.BRIDGE, tunnel = et and et.TUNNEL,
+		signalObj = ot and ot.SIGNAL,
 	}
+	N.stats.edgeObjectTypeEnum = otSrc
+	N.stats.signalObjValue = ot and tostring(ot.SIGNAL) or nil
+	-- the signal type values (Signal.Type in the docs), to read the "g<type>" entries right
+	pcall(function()
+		local cands = {
+			{ "api.type.Signal.Type", function() return api.type.Signal.Type end },
+			{ "api.type.enum.SignalType", function() return api.type.enum.SignalType end },
+			{ "api.type.enum.Signal", function() return api.type.enum.Signal end },
+		}
+		for _, c in ipairs(cands) do
+			local ok, v = pcall(c[2])
+			if ok and v ~= nil then
+				local d = {}
+				for _, k in ipairs({ "SIGNAL", "ONE_WAY_SIGNAL", "WAYPOINT", "PATH_SIGNAL", "ONE_WAY_PATH_SIGNAL" }) do
+					local okK, x = pcall(function() return v[k] end)
+					if okK and x ~= nil then d[k] = tostring(x) end
+				end
+				N.stats["enum_" .. c[1]:gsub("%.", "_")] = d
+			end
+		end
+	end)
 	N.stats.roadTypeEnum = rtSrc
 	N.stats.edgeTypeEnum = etSrc
 	return N.enum
@@ -483,6 +510,88 @@ local function tplOf(name)
 end
 
 local function f0(v) return string.format("%.0f", v) end
+
+-- Point and direction on a base edge (cubic Hermite from its end positions and tangents) at u in 0..1.
+local function edgeAt(p0, p1, t0, t1, u)
+	if not (t0 and t1) then
+		return p0.x + (p1.x - p0.x) * u, p0.y + (p1.y - p0.y) * u, p1.x - p0.x, p1.y - p0.y
+	end
+	local u2, u3 = u * u, u * u * u
+	local h00, h10, h01, h11 = 2 * u3 - 3 * u2 + 1, u3 - 2 * u2 + u, -2 * u3 + 3 * u2, u3 - u2
+	local d00, d10, d01, d11 = 6 * u2 - 6 * u, 3 * u2 - 4 * u + 1, -6 * u2 + 6 * u, 3 * u2 - 2 * u
+	return h00 * p0.x + h10 * t0.x + h01 * p1.x + h11 * t1.x,
+		h00 * p0.y + h10 * t0.y + h01 * p1.y + h11 * t1.y,
+		d00 * p0.x + d10 * t0.x + d01 * p1.x + d11 * t1.x,
+		d00 * p0.y + d10 * t0.y + d01 * p1.y + d11 * t1.y
+end
+
+-- Direction of one lane (transport network edge) of a base edge, from its geometry.
+local function laneDir(eid)
+	local tn = getComp(eid.entity, "TRANSPORT_NETWORK")
+	if not tn then return nil end
+	local g = tn.edges[eid.index + 1].geometry
+	local calc = api.engine.util.transport.calcPosition
+	local a, b = calc(g, 0), calc(g, 1)
+	if not (a and b) then return nil end
+	return b.x - a.x, b.y - a.y
+end
+
+local function pairPart(pr, i)
+	if pr == nil then return nil end
+	local ok, v = pcall(function() return pr[i] end)
+	if ok and v ~= nil then return v end
+	ok, v = pcall(function() return i == 1 and pr.first or pr.second end)
+	if ok then return v end
+	return nil
+end
+
+-- Signals on a track edge, as signal entries of the network export (see above). Each signal sits on one
+-- lane of the edge; it applies to trains running along that lane, or against it when edgePr's flag is set.
+local SIGDIAG = 0
+local function readSignals(e, en)
+	local objs = toArray(e.objects)
+	if #objs == 0 then return nil end
+	local out = {}
+	for _, o in ipairs(objs) do
+		local ent, typ = pairPart(o, 1), pairPart(o, 2)
+		if ent ~= nil and (en.signalObj == nil or typ == en.signalObj) then
+			local sl = getComp(ent, "SIGNAL_LIST")
+			if sl then
+				local eo = getComp(ent, "EDGE_OBJECT")
+				local u = eo and tonumber(eo.param) or 0.5
+				local x, y, tx, ty = edgeAt(e.position0, e.position1, e.tangent0, e.tangent1, u)
+				for _, sg in ipairs(toArray(sl.signals)) do
+					local pr = sg.edgePr
+					local eid, rev = pairPart(pr, 1), pairPart(pr, 2)
+					local okL, lx, ly = pcall(laneDir, eid)
+					local hx, hy = tx, ty
+					if okL and lx then
+						if lx * tx + ly * ty < 0 then hx, hy = -tx, -ty end   -- the lane runs node1 -> node0
+					end
+					if rev == true then hx, hy = -hx, -hy end
+					local len = math.sqrt(hx * hx + hy * hy)
+					if len > 0 then hx, hy = hx / len, hy / len end
+					local tnum = tonumber(sg.type)
+					out[#out + 1] = "g" .. (tnum or tostring(sg.type)) .. (rev == true and "r" or "") .. ","
+						.. f0(x) .. "," .. f0(y) .. "," .. f0(hx * 100) .. "," .. f0(hy * 100)
+					N.stats.signalsRead = (N.stats.signalsRead or 0) + 1
+					if SIGDIAG < 3 then
+						-- what the first signals look like, for checking the API against the docs
+						SIGDIAG = SIGDIAG + 1
+						N.stats["signalSample" .. SIGDIAG] = {
+							objType = tostring(typ), type = tostring(sg.type), rev = tostring(rev),
+							edgePr = type(pr), eid = eid and (tostring(eid.entity) .. ":" .. tostring(eid.index)) or "nil",
+							lane = okL and (lx and (f0(lx) .. "," .. f0(ly)) or "nil") or ("error: " .. tostring(lx)),
+							tangent = f0(tx) .. "," .. f0(ty), param = tostring(eo and eo.param),
+						}
+					end
+				end
+			end
+		end
+	end
+	if #out == 0 then return nil end
+	return table.concat(out, ";")
+end
 
 local function readEdge(id)
 	local e = getComp(id, "BASE_EDGE")
@@ -537,6 +646,14 @@ local function readEdge(id)
 		local db = math.abs((bx - x0) * dy - (by - y0) * dx) / len
 		if da > 1.5 or db > 1.5 then
 			s = s .. "," .. f0(ax) .. "," .. f0(ay) .. "," .. f0(bx) .. "," .. f0(by)
+		end
+	end
+	if kind == "r" then
+		local okS, sig = pcall(readSignals, e, en)
+		if okS then
+			if sig then s = s .. ";" .. sig end
+		else
+			warnOnce("read_signals", sig)
 		end
 	end
 	return { tile = tileKey((x0 + x1) / 2, (y0 + y1) / 2), s = s }
@@ -1518,7 +1635,7 @@ local function init()
 		engine = tostring(select(2, pcall(function() return api.engine.ComponentType.BASE_EDGE end))),
 	}
 	registerJobs()
-	S.status.version = 7
+	S.status.version = 8   -- 8: signals in the network export
 	S.status.t = wallTime()
 	save("status", S.status)
 	debugPrint({ tf3map = "started", status = S.status })

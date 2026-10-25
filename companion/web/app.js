@@ -671,12 +671,17 @@ function buildTile(key, str, templates) {
   const tl = {
     key, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity,
     rail: new Path2D(), railTunnel: new Path2D(), road: new Path2D(), street: new Path2D(), streetTunnel: new Path2D(),
-    nRail: 0, nStreet: 0, has: {}, railSegs: [],
+    nRail: 0, nStreet: 0, has: {}, railSegs: [], signals: [],
   };
   if (!str) return tl;
   const minor = templates.map(n => MINOR_STREET.test(n || ""));
   for (const e of str.split(";")) {
     const f = e.split(",");
+    // signal on the track edge just before it (mod 1.3+): g<type>[r], x, y, hx, hy
+    if (f[0][0] === "g" && f.length >= 5) {
+      if (tl.railSegs.length) tl.signals.push({ t: parseInt(f[0].slice(1), 10), x: +f[1], y: +f[2], hx: +f[3] / 100, hy: +f[4] / 100, seg: tl.railSegs.length - 1 });
+      continue;
+    }
     if (f.length < 7) continue;
     const kind = f[0], tunnel = f[2] === "2";
     const x0 = +f[3], y0 = +f[4], x1 = +f[5], y1 = +f[6];
@@ -708,6 +713,8 @@ function applyNet(p) {
   net.session = p.session;
   net.seq = p.seq || 0;
   net.templates = Array.isArray(p.templates) ? p.templates : [];
+  if (p.stats) net.stats = p.stats;
+  net.sections = null;
   for (const [k, str] of Object.entries(p.tiles || {})) net.tiles.set(k, buildTile(k, str, net.templates));
   const keep = new Set(p.keys || []);
   for (const k of [...net.tiles.keys()]) if (!keep.has(k)) net.tiles.delete(k);
@@ -1074,6 +1081,188 @@ function drawNet(vr) {
     ctx.strokeStyle = color; ctx.globalAlpha = alpha * focusNetAlpha(key); ctx.lineWidth = px / s;
     ctx.setLineDash(dashed ? [5 / s, 4 / s] : []);
     for (const tl of tiles) if (tl.has[layer]) ctx.stroke(tl[layer]);
+  }
+  ctx.restore();
+}
+
+// ---- signals and track direction (rail focus). In Transport Fever a track has no direction of its own:
+// one-way signals give it one. The network is cut into sections between switches (nodes where more or
+// fewer than two track edges meet); a section whose one-way signals all point the same way is one-way,
+// one with none runs both ways, one with one-way signals pointing at each other is a conflict.
+const ONEWAY_COLOR = "#ffa94d", CONFLICT_COLOR = "#ff5a5a";
+// Signal.Type values: from the game when the mod reports the enum, else the order in the docs.
+function sigTypes() {
+  const st = S.net.stats || {};
+  for (const k of ["enum_api_type_Signal_Type", "enum_api_type_enum_SignalType", "enum_api_type_enum_Signal"]) {
+    const e = st[k];
+    if (e && e.ONE_WAY_SIGNAL != null) return { normal: +e.SIGNAL, one: +e.ONE_WAY_SIGNAL, way: e.WAYPOINT != null ? +e.WAYPOINT : 2 };
+  }
+  return { normal: 0, one: 1, way: 2 };
+}
+// Does the mod send signals? (1.3 and later report the edge object enum, even on a map without signals.)
+function signalsSupported() {
+  const st = S.net.stats || {};
+  if (st.signalObjValue != null || st.edgeObjectTypeEnum != null) return true;
+  for (const tl of S.net.tiles.values()) if (tl.signals.length) return true;
+  return false;
+}
+function sampleSeg(sg) {
+  if (sg.length === 4) return [[sg[0], sg[1]], [sg[2], sg[3]]];
+  const [x0, y0, ax, ay, bx, by, x1, y1] = sg, out = [];
+  for (let k = 0; k <= 8; k++) {
+    const t = k / 8, u = 1 - t;
+    const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    out.push([a * x0 + b * ax + c * bx + d * x1, a * y0 + b * ay + c * by + d * y1]);
+  }
+  return out;
+}
+function railSections() {
+  const net = S.net;
+  if (net.sections) return net.sections;
+  const segs = [], nodes = new Map();
+  const node = (x, y) => x + "," + y;
+  for (const tl of net.tiles.values()) {
+    const base = segs.length;
+    tl.railSegs.forEach((sg, i) => {
+      const n = sg.length, a = node(sg[0], sg[1]), b = node(sg[n - 2], sg[n - 1]);
+      segs.push({ sg, a, b, sigs: [] });
+      for (const k of [a, b]) { let l = nodes.get(k); if (!l) nodes.set(k, l = []); l.push(base + i); }
+    });
+    for (const sig of tl.signals) if (segs[base + sig.seg]) segs[base + sig.seg].sigs.push(sig);
+  }
+  const used = new Uint8Array(segs.length);
+  const walk = (start, at) => {
+    const parts = [];
+    let i = start;
+    while (true) {
+      used[i] = 1;
+      const sm = segs[i], fwd = sm.a === at;
+      parts.push([i, fwd]);
+      const next = fwd ? sm.b : sm.a;
+      const l = nodes.get(next);
+      if (l.length !== 2) break;
+      const j = l.find(x => x !== i && !used[x]);
+      if (j === undefined) break;
+      i = j; at = next;
+    }
+    return parts;
+  };
+  const raw = [];
+  for (const [k, l] of nodes) if (l.length !== 2) for (const i of l) if (!used[i]) raw.push(walk(i, k));
+  for (let i = 0; i < segs.length; i++) if (!used[i]) raw.push(walk(i, segs[i].a));   // closed loops
+  const T = sigTypes(), out = [];
+  for (const parts of raw) {
+    const pts = [];
+    let plus = 0, minus = 0;
+    const sigs = [];
+    for (const [i, fwd] of parts) {
+      const sm = segs[i];
+      const p = sampleSeg(sm.sg);
+      if (!fwd) p.reverse();
+      for (const sig of sm.sigs) {
+        sigs.push(sig);
+        if (sig.t !== T.one) continue;
+        // direction of the track at the signal, in the order the section is walked
+        let best = 0, bd = Infinity;
+        for (let k = 0; k < p.length - 1; k++) {
+          const d = Math.hypot((p[k][0] + p[k + 1][0]) / 2 - sig.x, (p[k][1] + p[k + 1][1]) / 2 - sig.y);
+          if (d < bd) { bd = d; best = k; }
+        }
+        const dx = p[best + 1][0] - p[best][0], dy = p[best + 1][1] - p[best][1];
+        if (sig.hx * dx + sig.hy * dy >= 0) plus++; else minus++;
+      }
+      for (const q of pts.length ? p.slice(1) : p) pts.push(q);
+    }
+    const dir = plus && !minus ? 1 : minus && !plus ? -1 : plus && minus ? 0 : null;
+    if (dir === -1) pts.reverse();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const path = new Path2D();
+    pts.forEach(([x, y], k) => k ? path.lineTo(x, y) : path.moveTo(x, y));
+    out.push({ pts, path, dir: dir === -1 ? 1 : dir, sigs, x0, y0, x1, y1 });
+  }
+  net.sections = out;
+  return out;
+}
+function railFocus() { return !!(SET.focus && SET.focus.type === "mode" && SET.focus.mode === "rail"); }
+// Under the lines: one-way sections in orange, conflicts in red.
+function drawRailSections(vr) {
+  if (!railFocus() || !SET.layers.rail) return;
+  const s = S.view.scale;
+  ctx.save();
+  setWorldTransform();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.lineWidth = clamp(s * 12, 2.4, 5) / s;
+  for (const sc of railSections()) {
+    if (sc.dir === null || sc.x1 < vr.x0 || sc.x0 > vr.x1 || sc.y1 < vr.y0 || sc.y0 > vr.y1) continue;
+    ctx.strokeStyle = sc.dir === 0 ? CONFLICT_COLOR : ONEWAY_COLOR;
+    ctx.stroke(sc.path);
+  }
+  ctx.restore();
+}
+// Over the lines: arrows along one-way sections, and the signals themselves when zoomed in.
+function drawRailArrows(vr) {
+  if (!railFocus() || !SET.layers.rail) return;
+  const secs = railSections(), T = sigTypes();
+  const chevron = (x, y, ux, uy, size, color) => {
+    const nx = -uy, ny = ux;
+    ctx.beginPath();
+    ctx.moveTo(x - ux * size + nx * size * 0.8, y - uy * size + ny * size * 0.8);
+    ctx.lineTo(x + ux * size * 0.4, y + uy * size * 0.4);
+    ctx.lineTo(x - ux * size - nx * size * 0.8, y - uy * size - ny * size * 0.8);
+    ctx.strokeStyle = "rgba(15,23,32,0.85)"; ctx.lineWidth = 4.5; ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.stroke();
+  };
+  ctx.save();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const STEP = 90;
+  for (const sc of secs) {
+    if (sc.dir !== 1 || sc.x1 < vr.x0 || sc.x0 > vr.x1 || sc.y1 < vr.y0 || sc.y0 > vr.y1) continue;
+    const sp = sc.pts.map(([x, y]) => toScreen(x, y));
+    let total = 0;
+    for (let k = 1; k < sp.length; k++) total += Math.hypot(sp[k][0] - sp[k - 1][0], sp[k][1] - sp[k - 1][1]);
+    if (total < 18) continue;
+    // at least one arrow in the middle of a short section, else one every STEP px
+    let next = total < STEP ? total / 2 : STEP / 2, acc = 0;
+    for (let k = 1; k < sp.length && next <= total; k++) {
+      const [ax, ay] = sp[k - 1], [bx, by] = sp[k];
+      const d = Math.hypot(bx - ax, by - ay);
+      while (d > 0 && next <= acc + d) {
+        const f = (next - acc) / d, x = ax + (bx - ax) * f, y = ay + (by - ay) * f;
+        if (x > -10 && y > -10 && x < W + 10 && y < H + 10) chevron(x, y, (bx - ax) / d, (by - ay) / d, 5.5, ONEWAY_COLOR);
+        next += STEP;
+      }
+      acc += d;
+    }
+  }
+  // signals: one-way = orange triangle, normal = white triangle, waypoint = diamond
+  if (S.view.scale > 0.025) {
+    for (const tl of S.net.tiles.values()) {
+      if (tl.x1 < vr.x0 || tl.x0 > vr.x1 || tl.y1 < vr.y0 || tl.y0 > vr.y1) continue;
+      for (const g of tl.signals) {
+        const [x, y] = toScreen(g.x, g.y);
+        if (x < -10 || y < -10 || x > W + 10 || y > H + 10) continue;
+        const [x2, y2] = toScreen(g.x + g.hx * 10, g.y + g.hy * 10);
+        const dl = Math.hypot(x2 - x, y2 - y) || 1, ux = (x2 - x) / dl, uy = (y2 - y) / dl, nx = -uy, ny = ux;
+        const r = 6, fill = g.t === T.one ? ONEWAY_COLOR : g.t === T.way ? "#7fd1ff" : "#ffffff";
+        ctx.beginPath();
+        if (g.t === T.way) { ctx.moveTo(x + ux * r, y + uy * r); ctx.lineTo(x + nx * r * 0.7, y + ny * r * 0.7); ctx.lineTo(x - ux * r, y - uy * r); ctx.lineTo(x - nx * r * 0.7, y - ny * r * 0.7); }
+        else {
+          // a bar across the track where the signal stands, and a slim arrowhead in the direction it applies to
+          ctx.moveTo(x + nx * r, y + ny * r); ctx.lineTo(x - nx * r, y - ny * r);
+          ctx.lineWidth = 4.5; ctx.strokeStyle = "#0f1720"; ctx.stroke();
+          ctx.lineWidth = 2.2; ctx.strokeStyle = fill; ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(x + ux * r * 2.2, y + uy * r * 2.2);
+          ctx.lineTo(x + ux * r * 0.3 + nx * r * 0.7, y + uy * r * 0.3 + ny * r * 0.7);
+          ctx.lineTo(x + ux * r * 0.3 - nx * r * 0.7, y + uy * r * 0.3 - ny * r * 0.7);
+        }
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.lineWidth = 1.3; ctx.strokeStyle = "#0f1720"; ctx.stroke();
+      }
+    }
   }
   ctx.restore();
 }
@@ -1582,8 +1771,10 @@ function render() {
   ctx.restore();
 
   drawNet(vr);
+  drawRailSections(vr);
   drawCatchment();
   drawLines();
+  drawRailArrows(vr);
   drawVehicles();   // under the markers and labels, so names stay readable in busy towns
   const placed = [];
   drawIndustries(placed);
@@ -1663,7 +1854,19 @@ function drawScale(step) {
 function updateLegend() {
   const el = document.getElementById("legend");
   const k = ["noise", "pollution"].find(x => SET.layers[x] && S.grids[x]);
-  if (!k || (S.sel && document.getElementById("card").classList.contains("open"))) { el.style.display = "none"; return; }
+  const cardOpen = S.sel && document.getElementById("card").classList.contains("open");
+  if (!k && railFocus() && S.net.tiles.size && !cardOpen) {
+    // rail focus: what the colours mean, or that the mod is too old to send signals
+    const html = signalsSupported()
+      ? `<div class="lg"><span class="lgl" style="background:${ONEWAY_COLOR}"></span>${escapeHtml(t("legend.oneway"))}</div>`
+        + `<div class="lg"><span class="lgl" style="background:${getCss("--rail")}"></span>${escapeHtml(t("legend.twoway"))}</div>`
+        + (railSections().some(sc => sc.dir === 0) ? `<div class="lg"><span class="lgl" style="background:${CONFLICT_COLOR}"></span>${escapeHtml(t("legend.conflict"))}</div>` : "")
+      : `<div class="lg">${escapeHtml(t("legend.noSignals"))}</div>`;
+    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+    el.style.display = "block";
+    return;
+  }
+  if (!k || cardOpen) { el.style.display = "none"; return; }
   const stops = HEAT[k].map(c => `rgb(${c.join(",")})`).join(",");
   const html = `${escapeHtml(t("layer." + k))}<div class="grad" style="background:linear-gradient(90deg,${stops})"></div>`
     + `<div class="ends"><span>0</span><span>${(S.grids[k].max || 0).toFixed(1)}</span></div>`;

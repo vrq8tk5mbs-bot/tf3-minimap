@@ -236,6 +236,7 @@ def get_entities(ct, filters=None):
     return lua.table_from([])
 
 
+EDGE_OBJECTS = {}   # edge id -> [(object entity, EdgeObjectType)], filled by fake_world
 EXTRA_COMPONENTS = []   # functions (e, ct) -> component or None, installed by fake_world
 
 
@@ -253,6 +254,7 @@ def get_component(e, ct):
             "position0": vec(*d["p0"]), "position1": vec(*d["p1"]),
             "tangent0": vec(*d["t0"]), "tangent1": vec(*d["t1"]),
             "roadType": d["road"], "roadTemplate": d["tpl"], "type": d["etype"], "typeIndex": 0,
+            "objects": lua.table_from([lua.table_from([ent, typ]) for ent, typ in EDGE_OBJECTS.get(e, [])]),
         })
     if ct == CT["NAME"]:
         if e in towns:

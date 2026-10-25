@@ -162,7 +162,7 @@ def install(g):
         return vec(h00 * x0 + h10 * a0 + h01 * x1 + h11 * a1, h00 * y0 + h10 * b0 + h01 * y1 + h11 * b1, 0)
 
     def calc_position(geom, t):
-        return hermite(edges[geom.edge], t)
+        return hermite(edges[geom.edge], 1 - t if geom.rev else t)
 
     # ------------------------------------------------------------- industries / stocks
     inds = g.inds
@@ -229,12 +229,47 @@ def install(g):
         if ct == CT["TRANSPORT_NETWORK"] and e in edges:
             d = edges[e]
             length = math.dist(d["p0"], d["p1"])
-            return T({"edges": T({1: T({"geometry": T({"length": length, "edge": e})})})})
+            # lane 0 runs node0 -> node1, lane 1 back
+            return T({"edges": T({1: T({"geometry": T({"length": length, "edge": e, "rev": False})}),
+                                  2: T({"geometry": T({"length": length, "edge": e, "rev": True})})})})
+        if ct == CT["SIGNAL_LIST"] and e in signals:
+            d = signals[e]
+            return T({"signals": T({1: T({"edgePr": T({1: T({"entity": d["edge"], "index": d["lane"]}), 2: d["rev"]}),
+                                          "type": d["type"], "state": 0, "stateTime": 0})})})
+        if ct == CT["EDGE_OBJECT"] and e in signals:
+            return T({"param": signals[e]["param"], "edgeObjectConstruction": "::/railroad/signal_new_block.mdl"})
         if ct == CT["INDUSTRY"] and e in inds:
             return T({"level": 2, "construction": e + 100, "stockList": stock_of[e]})
         if ct == CT["TOWN"] and e in towns:
             return town_comp(e)
         return None
+
+    # ------------------------------------------------------------- signals (Signal.Type: 0 signal, 1 one-way, 2 waypoint)
+    CT["SIGNAL_LIST"], CT["EDGE_OBJECT"] = 13, 14
+    g.G.api.type.ComponentType.SIGNAL_LIST = 13
+    g.G.api.type.ComponentType.EDGE_OBJECT = 14
+    enum.EdgeObjectType = T({"STOP_LEFT": 0, "STOP_RIGHT": 1, "SIGNAL": 2})
+    signals = {}   # signal list entity -> edge, lane, rev, type, param
+
+    def add_signal(edge, lane, rev, typ, param=0.5):
+        ent = 900000 + len(signals)
+        signals[ent] = {"edge": edge, "lane": lane, "rev": rev, "type": typ, "param": param}
+        g.EDGE_OBJECTS.setdefault(edge, []).append((ent, 2))
+
+    # Harbin -> Xi'an: one-way signals for trains going Harbin -> Xi'an (lane 0 = edge direction)
+    r = g.RAIL_ROUTES[(0, 5)]
+    for k in range(10, len(r) - 5, 25):
+        add_signal(r[k], 0, False, 1)
+    # Xi'an -> Kolkata: normal signals both ways (single track), one given as lane 0 + reversed flag
+    r = g.RAIL_ROUTES[(5, 3)]
+    for k in range(8, len(r) - 5, 30):
+        add_signal(r[k], 0, False, 0, 0.3)
+        add_signal(r[k], 0, True, 0, 0.7)
+    # Kolkata -> Tokyo: one-way signals the other way (Tokyo -> Kolkata), lane 1 runs node1 -> node0
+    r = g.RAIL_ROUTES[(3, 2)]
+    for k in range(6, len(r) - 5, 25):
+        add_signal(r[k], 1, False, 1)
+    add_signal(g.RAIL_ROUTES[(2, 8)][20], 0, False, 2)   # a waypoint
 
     g.EXTRA_COMPONENTS.append(comp)
     g.EXTRA_ENTITIES[CT["STATION_GROUP"]] = lambda: list(groups)
