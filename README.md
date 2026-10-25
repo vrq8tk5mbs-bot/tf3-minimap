@@ -7,6 +7,7 @@ A live map of your Transport Fever 3 world in any web browser while you play —
 - **Live map**: terrain and water, roads and tracks, towns with population, industries with the cargo they accept and produce, every station and line along its real route, moving vehicles.
 - **Tap or click for details**: what a line carries right now, load, interval; station catchment; industry production and deliveries.
 - **Drive the game camera**: tap or click a place to jump there, a vehicle to follow it.
+- **Focus**: show only rail, road, water or air, one line or one station. In **rail** focus the map shows **signals** and which track is **one-way** (orange, with arrows) and which runs both ways, so you see where passing loops are and where more could go.
 - **Filters**: transport types, passengers / cargo, industry types, layers. Rotate the map to any angle, km or miles, export the network as SVG.
 - **13 languages**, the same as the game.
 

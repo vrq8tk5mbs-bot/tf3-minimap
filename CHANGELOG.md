@@ -3,6 +3,22 @@
 Every entry says first **what players need to do**: update the mod, download a new companion, or nothing.
 The mod comes from mod.io (the game updates it); the companion comes from [GitHub Releases](https://github.com/vrq8tk5mbs-bot/tf3-minimap/releases/latest).
 
+## 1.3.0 — 2026-10-25
+
+**What you need to do**
+- **Mod (mod.io)**: updated. The game downloads the update by itself; **restart the game** afterwards so the new version runs. Your saves are not affected.
+- **Windows**: download the new companion (`TF3-Minimap-Windows.zip`), close the old companion window, replace the old folder, start `TF3 Minimap.exe` again.
+- **Mac / Linux**: download the new companion zip, close the old companion, replace the old folder, start it again.
+- Signals need both: the new mod sends them, the new companion draws them. With only one of the two updated everything else keeps working; the rail focus then says the mod needs updating.
+
+**Changes**
+- **Signals and one-way track** in the rail focus (◎ Focus → Rail). In Transport Fever a track has no direction of its own: one-way signals give it one. The map cuts the network into sections between switches and colours every section whose one-way signals all point the same way **orange, with arrows** in the direction trains may run. Sections without one-way signals run both ways and stay plain. A section whose one-way signals face each other is drawn **red**. Zoomed out you see at a glance where single track runs both ways and where passing loops are, and where another loop could go.
+- Zoom in to see the signals themselves: a bar across the track and an arrowhead in the direction the signal applies to. Orange = one-way signal, white = normal signal, blue diamond = waypoint.
+- New signals show up within seconds of building them.
+- A small legend in the rail focus says what the colours mean.
+
+**Что делать (RU)**: мод обновится через mod.io сам — после этого перезапустить игру; скачать новый компаньон (Windows и Mac/Linux) и заменить папку. Сейвы не затронуты.
+
 ## 1.2.0 — 2026-10-25
 
 **What you need to do**
