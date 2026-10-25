@@ -99,15 +99,23 @@ const SET = {
   lineTags: recall("lineTags", true),
   rotation: recall("rotation", recall("rotate", false) ? "auto" : 0),   // degrees clockwise, or "auto" = turn to fit the screen
   units: recall("units", "km"),
-  chain: recall("chain", null),   // "Only this chain" in effect: { kind, prev: hidden types before, ind: industries layer before }
+  chain: recall("chain", null),   // "Only this chain" in effect: { kind }
+  focus: recall("focus", null),   // other focus in effect: { type: "mode", mode } | { type: "line", id } | { type: "station", id }
+  focusPrev: recall("focusPrev", null),   // filters as they were before the first focus (chain or other): restored on exit
 };
+// companion 1.1.x kept the chain's undo state inside the chain itself
+if (SET.chain && SET.chain.prev && !SET.focusPrev) {
+  SET.focusPrev = { layers: { ...SET.layers, industries: SET.chain.ind !== false }, lineFilter: null, hiddenKinds: SET.chain.prev };
+}
+if (SET.chain) SET.chain = { kind: SET.chain.kind };
+if (!SET.chain && !SET.focus) SET.focusPrev = null;
 if (!MAP_STYLES[SET.mapStyle]) SET.mapStyle = "natural";
 for (const c of CATS) SET.lineFilter[c.key] = { p: true, c: true, ...(SET.lineFilter[c.key] || {}) };
 function saveSettings() {
   store("lang", SET.lang); store("layers", SET.layers); store("pins", SET.pins); store("lineFilter", SET.lineFilter);
   store("hiddenKinds", [...SET.hiddenKinds]); store("showPop", SET.showPop); store("showNeeds", SET.showNeeds); store("follow", SET.follow);
   store("mapStyle", SET.mapStyle); store("lineTags", SET.lineTags); store("rotation", SET.rotation); store("units", SET.units);
-  store("chain", SET.chain);
+  store("chain", SET.chain); store("focus", SET.focus); store("focusPrev", SET.focusPrev);
 }
 
 // ---- filter defaults / reset
@@ -115,6 +123,7 @@ function lineFilterAllOn() { return CATS.every(c => SET.lineFilter[c.key].p && S
 function layersAreDefault(keys) { return (keys || LAYERS.map(L => L.key)).every(k => !!SET.layers[k] === !!DEFAULT_LAYERS[k]); }
 // Filters the quick bar does not show: line filter, industry types, layers that are not pinned.
 function hiddenFiltersActive() {
+  if (focusActive()) return false;   // the focus chip already says the map is filtered
   return !lineFilterAllOn() || (SET.hiddenKinds.size > 0 && !SET.chain) || !layersAreDefault(LAYERS.map(L => L.key).filter(k => !SET.pins.includes(k)));
 }
 function filtersAreDefault() { return lineFilterAllOn() && SET.hiddenKinds.size === 0 && layersAreDefault(); }
@@ -122,7 +131,7 @@ function resetFilters() {
   SET.layers = { ...DEFAULT_LAYERS };
   for (const c of CATS) SET.lineFilter[c.key] = { p: true, c: true };
   SET.hiddenKinds.clear();
-  SET.chain = null;
+  SET.chain = null; SET.focus = null; SET.focusPrev = null;
 }
 setLang(pickLang(SET.lang));
 
@@ -147,7 +156,7 @@ const S = {
   vehicles: [], townData: new Map(),
   grids: {}, rasters: {},
   flows: null,
-  sel: null, cardMore: false,
+  sel: null, cardMore: false, focusMenu: false,
   kindCargo: new Map(), flowCargo: new Map(),   // what industries accept / produce
 };
 
@@ -259,16 +268,110 @@ function chainKinds(kind) {
   }
   return keep;
 }
+// ---- focus: hide what the player is not working on. One focus at a time: a cargo chain (SET.chain),
+// a kind of transport, one line or one station (SET.focus). Entering the first focus remembers the filters;
+// switching between focuses starts again from those filters; leaving puts them back.
+const FOCUS_MODES = {
+  rail:  { cats: ["train"], net: "rail" },
+  road:  { cats: ["bus", "truck", "tram"], net: "street" },
+  water: { cats: ["ship"], net: null },
+  air:   { cats: AIR_CATS, net: null },
+};
+function focusActive() { return !!(SET.chain || SET.focus); }
+function filterSnapshot() {
+  return { layers: { ...SET.layers }, lineFilter: JSON.parse(JSON.stringify(SET.lineFilter)), hiddenKinds: [...SET.hiddenKinds] };
+}
+function restoreFilters(p) {
+  if (!p) return;
+  if (p.layers) SET.layers = { ...DEFAULT_LAYERS, ...p.layers };
+  if (p.lineFilter) for (const c of CATS) SET.lineFilter[c.key] = { p: true, c: true, ...(p.lineFilter[c.key] || {}) };
+  if (p.hiddenKinds) SET.hiddenKinds = new Set(p.hiddenKinds);
+}
+// Start a new focus: from the filters as they were before any focus.
+function beginFocus() {
+  if (!SET.focusPrev) SET.focusPrev = filterSnapshot();
+  else restoreFilters(SET.focusPrev);
+  SET.chain = null; SET.focus = null;
+}
+function afterFocusChange() {
+  saveSettings(); renderQuick(); renderCard(); draw();
+  if (document.getElementById("settings").classList.contains("open")) renderSettings();
+}
+// Leave the focus and put the filters back.
+function endFocus() {
+  if (!focusActive()) return;
+  restoreFilters(SET.focusPrev);
+  SET.chain = null; SET.focus = null; SET.focusPrev = null;
+  S.focusMenu = false;
+  afterFocusChange();
+}
+// A filter changed by hand inside a focus: the focus ends, the change stays.
+function dropFocus() { SET.chain = null; SET.focus = null; SET.focusPrev = null; }
+function setFocus(f) {
+  beginFocus();
+  SET.focus = f;
+  S.focusMenu = false;
+  // what the focus is about is always drawn, whatever the filters were
+  SET.layers.lines = SET.layers.stations = SET.layers.vehicles = true;
+  if (f.type === "mode") {
+    const m = FOCUS_MODES[f.mode];
+    if (m.net) SET.layers[m.net] = true;
+    for (const c of m.cats) SET.lineFilter[c] = { p: true, c: true };
+  } else {
+    for (const c of CATS) SET.lineFilter[c.key] = { p: true, c: true };
+  }
+  afterFocusChange();
+  // from a card the card's own button already shows the change, and a toast would cover it
+  if (f.type === "mode") toast(t("toast.focus").replace("{what}", focusLabel()), false, 2200);
+}
+function focusLabel() {
+  if (SET.chain) return t("set.chain") + ": " + kindLabel(SET.chain.kind);
+  const f = SET.focus;
+  if (!f) return "";
+  if (f.type === "mode") return t("focus." + f.mode);
+  if (f.type === "line") { const L = S.lineById.get(f.id); return L ? L.name : "#" + f.id; }
+  if (f.type === "station") { const g = S.groupById.get(f.id); return g ? g.name : "#" + f.id; }
+  return "";
+}
+// Does the current focus (not chain) keep this line?
+function focusKeepsLine(L) {
+  const f = SET.focus;
+  if (!f) return true;
+  if (f.type === "mode") return FOCUS_MODES[f.mode].cats.includes(lineCat(L));
+  if (f.type === "line") return L.id === f.id;
+  if (f.type === "station") return (L.stops || []).some(s => s[0] === f.id);
+  return true;
+}
+// Roads, rails, towns and industries are the background of a focus: drawn faint, not hidden,
+// so the player still sees where things are.
+function focusNetAlpha(key) {
+  const f = SET.focus;
+  if (!f) return 1;
+  if (f.type === "mode" && FOCUS_MODES[f.mode].net === key) return 1;
+  return 0.3;
+}
+function focusIsFor(o) {
+  const f = SET.focus;
+  return !!(f && o && ((f.type === "line" && o.kind === "line") || (f.type === "station" && o.kind === "station")) && f.id === o.id);
+}
+// Kinds of transport the player has, for the focus menu.
+function focusModesAvailable() {
+  const have = new Set(S.lines.map(lineCat));
+  for (const g of S.groups) { const c = stationCat(g); if (c) have.add(c); }
+  const modes = Object.keys(FOCUS_MODES).filter(m => FOCUS_MODES[m].cats.some(c => have.has(c)));
+  return modes.length ? modes : Object.keys(FOCUS_MODES);
+}
+
 // Industry types filter: only this type and its direct partners.
 function showChain(kind) {
   const keep = chainKinds(kind);
-  // remember what was shown before the first chain, so undo goes back there even after switching chains
-  SET.chain = SET.chain ? { ...SET.chain, kind } : { kind, prev: [...SET.hiddenKinds], ind: SET.layers.industries };
+  beginFocus();
+  SET.chain = { kind };
+  S.focusMenu = false;
   SET.hiddenKinds.clear();
   for (const k of S.kinds) if (!keep.has(k.key)) SET.hiddenKinds.add(k.key);
   SET.layers.industries = true;
-  saveSettings(); renderQuick(); renderCard(); draw();
-  if (document.getElementById("settings").classList.contains("open")) renderSettings();
+  afterFocusChange();
   toast(t("toast.chain").replace("{kinds}", [...keep].map(kindLabel).join(", ")), false, 2000);
 }
 // Cargo the chain is about: what the chain's type accepts and produces. Cached until the world reloads.
@@ -282,14 +385,7 @@ function chainCargo() {
   return chainCargoCache.set;
 }
 // Undo "Only this chain": industry types (and the industries layer) as they were before.
-function undoChain() {
-  if (!SET.chain) return;
-  SET.hiddenKinds = new Set(SET.chain.prev || []);
-  SET.layers.industries = SET.chain.ind !== false;
-  SET.chain = null;
-  saveSettings(); renderQuick(); renderCard(); draw();
-  if (document.getElementById("settings").classList.contains("open")) renderSettings();
-}
+function undoChain() { endFocus(); }
 // For one industry: per cargo, every industry (and, for its outputs, every town) that could be its partner,
 // nearest first. "linked" = the game already logs deliveries between the two.
 function chainPartners(ind) {
@@ -385,6 +481,7 @@ function lineVisible(L) {
   if (!SET.layers.lines) return false;
   // "Only this chain": just the lines that can carry the chain's cargo, so the chain stands out
   if (SET.chain) { const cs = chainCargo(); if (!lineCargoIds(L).some(c => cs.has(c))) return false; }
+  if (SET.focus && !focusKeepsLine(L)) return false;
   const c = catOf(lineCat(L)), f = SET.lineFilter[c.key];
   const p = c.kinds.includes("p") && f.p, cg = c.kinds.includes("c") && f.c;
   if (!lineIsPass(L) && !lineIsCargo(L)) return p || cg;   // no vehicles yet
@@ -974,7 +1071,7 @@ function drawNet(vr) {
   ctx.lineCap = "round"; ctx.lineJoin = "round";
   for (const [key, layer, color, px, alpha, dashed] of layers) {
     if (!SET.layers[key]) continue;
-    ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = px / s;
+    ctx.strokeStyle = color; ctx.globalAlpha = alpha * focusNetAlpha(key); ctx.lineWidth = px / s;
     ctx.setLineDash(dashed ? [5 / s, 4 / s] : []);
     for (const tl of tiles) if (tl.has[layer]) ctx.stroke(tl[layer]);
   }
@@ -1080,7 +1177,12 @@ function stationVisible(g) {
   if (!SET.layers.stations || g.x == null) return false;
   const ls = S.lines.filter(L => (L.stops || []).some(s => s[0] === g.id));
   // in chain mode a station with no lines only shows at an industry of the chain
-  if (!ls.length) return !SET.chain || chainStations().has(g.id);
+  if (SET.focus && SET.focus.type === "station" && SET.focus.id === g.id) return true;
+  if (!ls.length) {
+    // a station without lines: kept by a transport focus of its own kind, hidden by line / station focus
+    if (SET.focus) return SET.focus.type === "mode" && FOCUS_MODES[SET.focus.mode].cats.includes(stationCat(g));
+    return !SET.chain || chainStations().has(g.id);
+  }
   return ls.some(lineVisible);
 }
 // Chain mode: stations next to a shown industry (an industry's own station sits right beside it).
@@ -1101,6 +1203,7 @@ function chainStations() {
 }
 // Chain mode: a town matters if it needs the chain's cargo; the rest are drawn small and quiet.
 function townInChain(tw) {
+  if (SET.focus) return false;   // background of a transport / line / station focus
   if (!SET.chain) return true;
   const d = S.townData.get(tw.id), cs = chainCargo();
   return !!(d && (d.needs || []).some(n => cs.has(n[0])));
@@ -1153,7 +1256,7 @@ function drawVehicles() {
   const vis = [];
   for (const v of S.vehicles) {
     const L = S.lineById.get(v.line);
-    if (L && !lineVisible(L)) continue;
+    if (L ? !lineVisible(L) : focusActive()) continue;
     const [x, y] = toScreen(v.x, v.y);
     if (x < -12 || y < -12 || x > W + 12 || y > H + 12) continue;
     vis.push([v, L, x, y]);
@@ -1243,14 +1346,16 @@ function townPopulation(id) {
 function drawTowns(placed) {
   if (!SET.layers.towns) return;
   const towns = [...S.towns].sort((a, b) => (b.size || 0) - (a.size || 0));
-  const drawn = [];
+  const drawn = [], quiet = [];
   for (const tw of towns) {
     const [x, y] = toScreen(tw.x, tw.y);
     if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
     if (!townInChain(tw) && !(S.sel && S.sel.kind === "town" && S.sel.id === tw.id)) {
       ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(235,240,245,0.45)"; ctx.fill();
-      continue;   // no name, no population, no collision box
+      // chain: no name; transport / line / station focus: a muted name to find one's way, no population
+      if (SET.focus) quiet.push([tw, x, y]);
+      continue;   // no collision box for the dot
     }
     const r = Math.max(4, Math.min(11, Math.sqrt(tw.size || 100) * 0.32)) * Math.min(1.6, Math.max(0.8, S.view.scale * 60));
     const sel = S.sel && S.sel.kind === "town" && S.sel.id === tw.id;
@@ -1260,6 +1365,7 @@ function drawTowns(placed) {
     placed.push({ x0: x - r, y0: y - r, x1: x + r, y1: y + r });
     drawn.push([tw, x, y, r]);
   }
+  for (const [tw, x, y] of quiet) label(tw.name, x + 6, y, 11, "500", "rgba(225,232,238,0.6)", placed);
   for (const [tw, x, y, r] of drawn) {
     let lx = x + r + 5, right = false;
     let ok = label(tw.name, lx, y, 12.5, "600", getCss("--text"), placed);
@@ -1296,15 +1402,18 @@ function industryMarkSize() {
 function drawIndustries(placed) {
   if (!SET.layers.industries || !S.industries.length) return;
   const s = industryMarkSize();
+  const faint = !!SET.focus;   // background of a transport / line / station focus
   for (const i of S.industries) {
     if (SET.hiddenKinds.has(i.kind)) continue;
     const [x, y] = toScreen(i.x, i.y);
     if (x < -20 || y < -20 || x > W + 20 || y > H + 20) continue;
     const sel = S.sel && S.sel.kind === i.kind && S.sel.id === i.id;
+    ctx.globalAlpha = faint && !sel ? 0.4 : 1;
     ctx.fillStyle = kindColor(i.kind);
     roundRect(x - s / 2, y - s / 2, s, s, 2); ctx.fill();
     ctx.strokeStyle = sel ? getCss("--accent") : "rgba(255,255,255,0.9)"; ctx.lineWidth = sel ? 3 : 1.5; ctx.stroke();
   }
+  ctx.globalAlpha = 1;
   // collision box: only the core, so the station badge on top can still place its name beside it
   const k = Math.max(9, Math.min(14, S.view.scale * 170)) / 2;
   for (const i of S.industries) {
@@ -1319,7 +1428,7 @@ function drawIndustries(placed) {
 // and the name under it when zoomed in. Drawn after towns and stations so their names win.
 function drawIndustryTags(placed) {
   S.indTagHits = [];
-  if (!SET.layers.industries || !S.industries.length) return;
+  if (!SET.layers.industries || !S.industries.length || SET.focus) return;
   const vis = [];
   for (const i of S.industries) {
     if (SET.hiddenKinds.has(i.kind)) continue;
@@ -1596,9 +1705,11 @@ function hitTest(sx, sy) {
     if (d < bestD) { bestD = d; best = p; }
   };
   if (SET.layers.stations) for (const g of S.groups) if (stationVisible(g)) consider(g, 4);
-  if (SET.layers.towns) for (const tw of S.towns) consider(tw, 6);
-  if (SET.layers.industries) for (const i of S.industries) if (!SET.hiddenKinds.has(i.kind)) consider(i, 0);
-  if (SET.layers.vehicles) for (const v of S.vehicles) { const L = S.lineById.get(v.line); if (!L || lineVisible(L)) consider(v, -6); }
+  // in a focus, towns and industries are background: what the focus shows wins a close tap
+  const bg = SET.focus ? -8 : 0;
+  if (SET.layers.towns) for (const tw of S.towns) consider(tw, 6 + bg);
+  if (SET.layers.industries) for (const i of S.industries) if (!SET.hiddenKinds.has(i.kind)) consider(i, bg);
+  if (SET.layers.vehicles) for (const v of S.vehicles) { const L = S.lineById.get(v.line); if (L ? lineVisible(L) : !focusActive()) consider(v, -6); }
   if (best) return best;
   // lines: distance to their polylines on screen
   if (SET.layers.lines) {
@@ -1681,6 +1792,11 @@ function chainSection(ind) {
   return h + `<div class="hint">${escapeHtml(t("card.chainHint"))}</div>`;
 }
 
+// "Only this line / station", or the way back when that focus is on.
+function focusBtn(o, key) {
+  return focusIsFor(o) ? `<button class="btn" data-act="unfocus">${escapeHtml(t("btn.unfocus"))}</button>`
+    : `<button class="btn" data-act="focus">${escapeHtml(t(key))}</button>`;
+}
 function renderCard() {
   const el = document.getElementById("card");
   const sel = S.sel;
@@ -1732,7 +1848,7 @@ function renderCard() {
     const f = S.flows && S.flows.entity === sel.id && !S.flows.pending ? S.flows : null;
     if (f && (f.catchIndustries || []).length) body += `<div class="sec">${escapeHtml(t("card.catchment"))}</div><div class="rows">`
       + f.catchIndustries.map(id => `<div class="r tap" data-industry="${id}"><span class="sw" style="background:${kindColor((S.industries.find(i => i.id === id) || {}).kind || "other")}"></span><span class="grow">${escapeHtml(entityName(id))}</span></div>`).join("") + `</div>`;
-    acts = showBtn;
+    acts = focusBtn(g, "btn.focusStation") + showBtn;
   } else if (sel.cardKind === "line") {
     const L = S.lineById.get(sel.id); if (!L) return select(null);
     const cat = lineCat(L);
@@ -1767,6 +1883,7 @@ function renderCard() {
     const stops = (L.stops || []).map(s => S.groupById.get(s[0])).filter(Boolean);
     if (stops.length) body += `<div class="sec">${escapeHtml(t("card.stops"))}</div><div class="rows">`
       + stops.map((g, i) => `<div class="r link" data-station="${g.id}"><span class="num">${i + 1}</span><span class="grow">${escapeHtml(g.name)}</span></div>`).join("") + `</div>`;
+    acts = focusBtn(L, "btn.focusLine");
   } else if (sel.cardKind === "vehicle") {
     const v = S.vehicles.find(x => x.id === sel.id);
     const L = v && S.lineById.get(v.line);
@@ -1791,7 +1908,8 @@ document.getElementById("card").addEventListener("click", e => {
       if (o) jumpTo(o);
     }
     if (act === "follow") command({ action: "focus", entity: S.sel.id });
-    if (act === "unchain") undoChain();
+    if (act === "unchain" || act === "unfocus") endFocus();
+    if (act === "focus") setFocus({ type: S.sel.cardKind, id: S.sel.id });
     if (act === "chain") { const i = S.industries.find(x => x.id === S.sel.id); if (i) showChain(i.kind); }
     if (act === "more") { S.cardMore = !S.cardMore; renderCard(); }
     return;
@@ -1888,6 +2006,7 @@ document.getElementById("compass").onclick = () => setRotation(0);
 document.addEventListener("gesturestart", e => e.preventDefault());
 
 function onTap(sx, sy) {
+  if (S.focusMenu) return closeFocusMenu();
   if (!S.bounds) return;
   const hit = hitTest(sx, sy);
   if (hit) return select(hit, true);
@@ -1917,19 +2036,27 @@ function renderQuick() {
   const box = document.getElementById("quick");
   const reset = hiddenFiltersActive()
     ? `<button class="chip pill resetchip" data-reset="1" title="${escapeHtml(t("set.resetAll"))}">↺ ${escapeHtml(t("set.filtersOn"))}</button>` : "";
-  const chain = SET.chain
-    ? `<button class="chip pill resetchip" data-unchain="1" title="${escapeHtml(t("btn.unchain"))}">${escapeHtml(t("set.chain"))}: ${escapeHtml(kindLabel(SET.chain.kind))} ✕</button>` : "";
-  const html = chain + reset + SET.pins.map(key => {
+  // focus: the active one with ✕, or the button that opens the choice of transport kinds (a small menu above the bar)
+  const focus = focusActive()
+    ? `<button class="chip pill resetchip focuschip" data-unfocus="1" title="${escapeHtml(t("btn.unfocus"))}">◎ ${escapeHtml(shortName(focusLabel(), 28))} ✕</button>`
+    : `<button class="chip pill focuschip${S.focusMenu ? " on" : ""}" data-focusmenu="1">◎ ${escapeHtml(t("focus.title"))}</button>`;
+  const html = focus + reset + SET.pins.map(key => {
     const L = LAYERS.find(x => x.key === key);
     if (!L) return "";
     const n = layerCount(key);
     return `<button class="chip pill${SET.layers[key] ? "" : " off"}" data-layer="${key}">${swatch(L)}${escapeHtml(t("layer." + key))}`
       + (n ? ` <span class="n">${fmtCount(n)}</span>` : "") + `</button>`;
   }).join("");
+  const menu = document.getElementById("focusMenu");
+  const open = S.focusMenu && !focusActive();
+  const mh = open ? focusModesAvailable().map(m => `<button data-focus="${m}">${iconSvg(FOCUS_MODES[m].cats[0], "mi")}${escapeHtml(t("focus." + m))}</button>`).join("") : "";
+  if (menu.dataset.html !== mh) { menu.innerHTML = mh; menu.dataset.html = mh; }
+  menu.classList.toggle("open", open);
   if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
 }
 document.getElementById("quick").addEventListener("click", e => {
-  if (e.target.closest("[data-unchain]")) return undoChain();
+  if (e.target.closest("[data-unchain]") || e.target.closest("[data-unfocus]")) return endFocus();
+  if (e.target.closest("[data-focusmenu]")) { S.focusMenu = !S.focusMenu; return renderQuick(); }
   if (e.target.closest("[data-reset]")) {
     resetFilters(); saveSettings(); renderQuick(); draw(); toast(t("toast.reset"));
     if (document.getElementById("settings").classList.contains("open")) renderSettings();
@@ -1939,6 +2066,11 @@ document.getElementById("quick").addEventListener("click", e => {
   if (!b) return;
   toggleLayer(b.dataset.layer);
 });
+document.getElementById("focusMenu").addEventListener("click", e => {
+  const fb = e.target.closest("[data-focus]");
+  if (fb) setFocus({ type: "mode", mode: fb.dataset.focus });
+});
+function closeFocusMenu() { if (S.focusMenu) { S.focusMenu = false; renderQuick(); } }
 function toggleLayer(key) {
   SET.layers[key] = !SET.layers[key];
   saveSettings();
@@ -2042,7 +2174,8 @@ document.getElementById("setBody").addEventListener("click", e => {
     const [what, how] = el.dataset.bulk.split(":");
     if (what === "layers") for (const L of LAYERS) SET.layers[L.key] = how === "all" ? true : how === "none" ? false : !!DEFAULT_LAYERS[L.key];
     if (what === "lines") for (const c of CATS) SET.lineFilter[c.key] = { p: how === "all", c: how === "all" };
-    if (what === "kinds") { SET.chain = null; SET.hiddenKinds.clear(); if (how === "none") for (const k of S.kinds) SET.hiddenKinds.add(k.key); }
+    if (focusActive()) dropFocus();
+    if (what === "kinds") { SET.hiddenKinds.clear(); if (how === "none") for (const k of S.kinds) SET.hiddenKinds.add(k.key); }
   } else if (el.dataset.reset) {
     resetFilters();
     toast(t("toast.reset"));
@@ -2050,7 +2183,7 @@ document.getElementById("setBody").addEventListener("click", e => {
     SET[el.dataset.opt] = !SET[el.dataset.opt];
   } else if (el.dataset.kind) {
     const k = el.dataset.kind;
-    SET.chain = null;
+    if (SET.chain) dropFocus();
     SET.hiddenKinds.has(k) ? SET.hiddenKinds.delete(k) : SET.hiddenKinds.add(k);
   } else if (el.dataset.chain) {
     return showChain(el.dataset.chain);

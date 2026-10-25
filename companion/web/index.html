@@ -172,6 +172,13 @@
   .item .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .btn:disabled { opacity: .45; cursor: default; }
   .chip.resetchip { color: var(--accent); border-color: rgba(255,204,77,0.55); }
+  /* focus: the choice of transport kinds opens in place of the layer chips */
+  .chip.focuschip.on { color: var(--accent); }
+  #focusMenu { position: fixed; left: 12px; border-radius: 16px !important; bottom: calc(62px + var(--safe-bottom)); z-index: 7; display: none; flex-direction: column; padding: 6px; min-width: 150px; }
+  #focusMenu.open { display: flex; }
+  #focusMenu button { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font: inherit; font-size: 14px; color: var(--text); background: none; border: 0; border-radius: 10px; cursor: pointer; text-align: left; }
+  #focusMenu button:hover { background: rgba(255,255,255,0.06); }
+  #focusMenu .mi { width: 18px; height: 18px; color: var(--accent); }
   /* industry cargo: inputs → outputs */
   .cflow { display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; }
   .cflow .ci { display: inline-flex; }
@@ -205,6 +212,7 @@
 </button>
 <div id="legend" class="pill"></div>
 <div id="card" class="pill"></div>
+<div id="focusMenu" class="pill"></div>
 
 <div class="bar bottom">
   <div id="quick" class="chips"></div>
